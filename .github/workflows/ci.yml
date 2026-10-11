@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Select Rust
+        run: rustup toolchain install 1.97.1 --profile minimal --component rustfmt
+      - run: cargo fmt --all -- --check
+      - run: cargo check --all-targets --locked --offline
+      - run: cargo test --locked --offline
+      - name: Check supported commands
+        run: |
+          cargo run --locked --offline -- --help
+          cargo run --locked --offline -- --version
+          set +e
+          cargo run --locked --offline -- unsupported-command
+          status=$?
+          test "$status" -eq 2

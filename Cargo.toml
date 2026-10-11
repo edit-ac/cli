@@ -1,0 +1,16 @@
+[package]
+name = "editac-cli"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.97.1"
+license = "Apache-2.0"
+repository = "https://github.com/edit-ac/cli"
+description = "Reserved offline edit.ac diagnostic utility; data commands are not implemented"
+publish = false
+
+[[bin]]
+name = "editac"
+path = "src/main.rs"
+
+[lints.rust]
+unsafe_code = "forbid"
