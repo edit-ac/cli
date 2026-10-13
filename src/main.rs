@@ -1,11 +1,11 @@
 use std::process::ExitCode;
 
-const HELP: &str = "editac — development scaffold
+const HELP: &str = "editac — local-first editor client scaffold
 
 Usage: editac [--help | --version]
 
-No document commands are implemented. Offline fixture and diagnostic commands
-are deferred until the shared document schema and fixture contracts are stable.
+No document commands are implemented. Local Markdown/text editing and hosted
+document editing are planned using the shared engine and Markdown representation.
 Roadmaps: https://github.com/edit-ac/architecture";
 
 fn main() -> ExitCode {

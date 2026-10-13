@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.97.1"
 license = "Apache-2.0"
 repository = "https://github.com/edit-ac/cli"
-description = "Reserved offline edit.ac diagnostic utility; data commands are not implemented"
+description = "Local-first edit.ac editor client scaffold; editing commands are not implemented"
 publish = false
 
 [[bin]]
