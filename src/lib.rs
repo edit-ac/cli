@@ -9,3 +9,6 @@ pub use editac_markdown as markdown;
 
 /// Immutable upstream source consumed by both crates (also pinned in Cargo.lock).
 pub const EDITOR_REVISION: &str = "5b3e96ec259f1cdd8df2971b2192c9cacf225a65";
+
+/// Offline local source acquisition, before any editor or mutation boundary.
+pub mod target;
