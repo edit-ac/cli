@@ -557,6 +557,49 @@ impl NativeStorage {
             })
         }
     }
+    /// Discover only a validated draft lineage. Reopen still checks the native store.
+    pub fn open_draft(root: impl AsRef<Path>) -> Result<Self, StorageError> {
+        let path = root.as_ref().join("draft.json");
+        let meta = fs::symlink_metadata(&path).map_err(io_error)?;
+        if !meta.is_file() || meta.file_type().is_symlink() || meta.len() > MAX_RECORD_BYTES {
+            return Err(invalid("unsafe draft record"));
+        }
+        let mut bytes = Vec::new();
+        File::open(&path)
+            .map_err(io_error)?
+            .take(MAX_RECORD_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(io_error)?;
+        if bytes.len() as u64 > MAX_RECORD_BYTES {
+            return Err(invalid("draft size limit"));
+        }
+        let stored: StoredDraft = decode(&bytes)?;
+        let identity = [
+            DocumentIdentity::v1,
+            DocumentIdentity::v2,
+            DocumentIdentity::v3,
+            DocumentIdentity::v4,
+            DocumentIdentity::v5,
+        ]
+        .into_iter()
+        .filter_map(|make| {
+            make(
+                stored.identity.document_id.clone(),
+                stored.identity.epoch.clone(),
+            )
+            .ok()
+        })
+        .find(|id| StoredIdentity::from(id) == stored.identity)
+        .ok_or_else(|| invalid("unsupported draft identity"))?;
+        let owner = Self::open(root, identity)?;
+        owner
+            .read_draft()?
+            .ok_or_else(|| invalid("missing draft"))?;
+        Ok(owner)
+    }
+    pub fn identity(&self) -> &DocumentIdentity {
+        &self.identity
+    }
     pub fn root(&self) -> &Path {
         &self.root
     }

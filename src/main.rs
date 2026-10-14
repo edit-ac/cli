@@ -164,8 +164,11 @@ fn main() -> ExitCode {
                         .map_or(u64::MAX, |d| d.as_secs());
                     use std::io::IsTerminal;
                     if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
-                        if editac_cli::tui::terminal::run(&mut session, now).is_err() {
-                            eprintln!("terminal I/O failed; retain session store for recovery");
+                        if let Err(error) = editac_cli::tui::terminal::run(&mut session, now) {
+                            eprintln!(
+                                "terminal lifecycle failed; retain session store and draft recovery: {}",
+                                editac_cli::tui::view::escape_line(&error.to_string(), 4096)
+                            );
                             return ExitCode::from(2);
                         }
                         return ExitCode::SUCCESS;

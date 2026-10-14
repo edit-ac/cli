@@ -30,6 +30,7 @@ pub enum Representation {
 
 pub struct TerminalSession<S: SessionStore> {
     pub service: EditService<S>,
+    pub recovery: Option<super::lifecycle::RecoveryOwner>,
     pub source: String,
     pub mode: SourceMode,
     pub representation: Representation,
@@ -73,6 +74,7 @@ pub fn open_cached<S: SessionStore>(
     let source = crate::reconcile::HostedProjection::capture(session.document())
         .map_err(|_| "cached source projection unavailable; retain recovery data")?;
     Ok(TerminalSession {
+        recovery: None,
         source: source.source,
         service: EditService::new(session, policy),
         mode: SourceMode::Markdown(Default::default()),
@@ -121,13 +123,21 @@ pub fn open_local(
         },
     )
     .map_err(|_| "local session restore failed; retain session store for recovery")?;
-    Ok(TerminalSession {
+    let mut result = TerminalSession {
+        recovery: None,
         source: baseline.source().into(),
         service: EditService::new(session, HostPolicy::default()),
         mode,
         representation: Representation::ExactSource,
         local_baseline: Some(baseline),
-    })
+    };
+    let recovery = super::lifecycle::RecoveryOwner::for_store(store_path, &identity)
+        .map_err(|_| "draft recovery unavailable; retain native store")?;
+    recovery
+        .persist(&result, None, &super::view::View::from_session(&result, 0))
+        .map_err(|_| "initial recovery snapshot failed; retain native store")?;
+    result.recovery = Some(recovery);
+    Ok(result)
 }
 
 #[derive(Debug)]
@@ -200,6 +210,14 @@ impl Request {
                 self.target.to_str().ok_or("invalid locator")?,
             )
         } else {
+            let store = self.store.as_deref().ok_or("store required")?;
+            if store.try_exists().map_err(|_| "store unavailable")? {
+                return super::lifecycle::reopen_local(
+                    Path::new(&self.target),
+                    self.options,
+                    store,
+                );
+            }
             let identity =
                 DocumentIdentity::v5(uuid()?, uuid()?).map_err(|_| "invalid new identity")?;
             open_local(
@@ -361,11 +379,21 @@ fn open_catalog_file(
     let path = path.as_ref().ok_or("uncached target unavailable offline")?;
     let store = NativeStore::open_existing(path, entry.identity.clone(), StoreLimits::default())
         .map_err(|_| "cached session unavailable; no replacement created")?;
-    open_cached(
+    let recovery = super::lifecycle::RecoveryOwner::for_store(path, &entry.identity)
+        .map_err(|_| "cached draft recovery unavailable")?;
+    recovery
+        .settle(&store)
+        .map_err(|_| "cached unjournaled recovery failed; retain private draft")?;
+    let mut session = open_cached(
         store,
         &catalog,
         &locator,
         *permission,
         HostPolicy::default(),
-    )
+    )?;
+    recovery
+        .restore_source(&mut session)
+        .map_err(|_| "cached draft recovery invalid; retain cache")?;
+    session.recovery = Some(recovery);
+    Ok(session)
 }

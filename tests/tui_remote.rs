@@ -79,6 +79,7 @@ impl Harness {
         let store = make("local.sqlite");
         let peer_store = make("peer.sqlite");
         let session = TerminalSession {
+            recovery: None,
             service: EditService::new(
                 Session::open(store.clone(), &id, CachedPermission::LOCAL).unwrap(),
                 HostPolicy::default(),

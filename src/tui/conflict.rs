@@ -151,6 +151,25 @@ impl ConflictView {
         self.prepared = None;
         self.top = 0;
     }
+    pub fn viewport_top(&self) -> usize {
+        self.top
+    }
+    /// Restore presentation only; prepared admission is deliberately revoked.
+    pub fn restore_presentation(
+        &mut self,
+        pane: Pane,
+        anchor: editac_core::Utf16Offset,
+        caret: editac_core::Utf16Offset,
+        top: usize,
+    ) -> Result<(), ConflictError> {
+        self.input
+            .select(&self.resolution, anchor, caret)
+            .map_err(|_| ConflictError::Rejected)?;
+        self.pane = pane;
+        self.top = top.min(self.source().split('\n').count().saturating_sub(1));
+        self.prepared = None;
+        Ok(())
+    }
     pub fn navigate(&mut self, delta: isize) {
         self.top = self
             .top

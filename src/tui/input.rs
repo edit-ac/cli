@@ -202,6 +202,7 @@ impl InputState {
 pub struct SourceInput {
     target: SourceTarget,
     expected: ObservedRevision,
+    opening: ObservedRevision,
     origin: TextOrigin,
 }
 impl SourceInput {
@@ -222,6 +223,7 @@ impl SourceInput {
             .capture_source(&session.source, session.mode, &owners, now)?;
         Ok(Self {
             target,
+            opening: read.revision.clone(),
             expected: read.revision,
             origin: TextOrigin::new("tui:source").expect("static valid origin"),
         })
@@ -250,6 +252,9 @@ impl SourceInput {
             .prepare_source(&self.target, &current, draft, &self.origin, now)?;
         self.expected = current;
         Ok(())
+    }
+    pub fn opening_revision(&self) -> &ObservedRevision {
+        &self.opening
     }
     pub fn revision(&self) -> &ObservedRevision {
         &self.expected

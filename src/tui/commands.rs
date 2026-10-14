@@ -98,6 +98,17 @@ impl Commands {
             .map_err(CommandError::Review)?;
         self.execute(session, Command::Commit, draft, now, root)
     }
+    /// Exact spelling of an already admitted but unacknowledged operation.
+    pub fn recovery_source<'a>(&'a self, fallback: &'a str) -> &'a str {
+        match &self.pending {
+            Some(Pending::Commit(s) | Pending::Undo(s)) => &s.after,
+            Some(Pending::Redo(s)) => &s.before,
+            None => fallback,
+        }
+    }
+    pub fn opening_revision(&self) -> &editac_session::revision::ObservedRevision {
+        self.binding.opening_revision()
+    }
     pub fn revision(&self) -> &editac_session::revision::ObservedRevision {
         self.binding.revision()
     }

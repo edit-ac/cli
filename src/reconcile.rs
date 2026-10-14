@@ -176,6 +176,17 @@ impl LocalBaseline {
                 .map_err(ReconcileError::Shared)?;
         Ok(Self { target, baseline })
     }
+    /// Bind recovered committed spelling while retaining the current guarded file target.
+    pub fn capture_recovered(
+        document: &Document,
+        target: LocalTarget,
+        source: &str,
+        owners: &[String],
+    ) -> Result<Self, ReconcileError> {
+        let baseline = SourceBaseline::capture(document, source, mode(target.format()), owners)
+            .map_err(ReconcileError::Shared)?;
+        Ok(Self { target, baseline })
+    }
     pub fn target(&self) -> &LocalTarget {
         &self.target
     }

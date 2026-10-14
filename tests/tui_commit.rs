@@ -123,6 +123,7 @@ impl Fixture {
         let session = Session::open(store.clone(), &self.id, CachedPermission::LOCAL).unwrap();
         (
             TerminalSession {
+                recovery: None,
                 service: EditService::new(session, HostPolicy::default()),
                 source: source.into(),
                 mode: if literal {

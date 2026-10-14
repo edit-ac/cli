@@ -4,6 +4,7 @@ pub mod commands;
 pub mod conflict;
 pub mod diff;
 pub mod input;
+pub mod lifecycle;
 pub mod positions;
 pub mod session;
 pub mod terminal;

@@ -300,6 +300,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "signal-hook",
  "unicode-segmentation",
  "unicode-width",
  "yrs",

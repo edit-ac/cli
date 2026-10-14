@@ -45,6 +45,13 @@ pub trait TerminalIo {
     fn resize(&mut self, size: (u16, u16)) -> io::Result<()>;
     fn draw(&mut self, view: &View) -> io::Result<()>;
     fn read(&mut self, timeout: Duration) -> io::Result<Option<Event>>;
+    fn lifecycle(&mut self) -> io::Result<Option<super::lifecycle::Event>> {
+        Ok(None)
+    }
+    fn suspend(&mut self) -> io::Result<()> {
+        Err(io::Error::other("suspend unsupported by this terminal"))
+    }
+    fn dispose(&mut self) {}
 }
 
 pub struct TerminalOwner<T: TerminalIo> {
@@ -103,6 +110,9 @@ impl<T: TerminalIo> TerminalOwner<T> {
         }
         pending.reverse();
         self.rollback = pending;
+        if self.rollback.is_empty() {
+            self.io.dispose();
+        }
         first.map_or(Ok(()), Err)
     }
     pub fn run(&mut self, view: &mut View) -> io::Result<()> {
@@ -122,8 +132,40 @@ impl<T: TerminalIo> TerminalOwner<T> {
         mut command: impl FnMut(&Event, &mut View) -> bool,
         mut tick: impl FnMut(&mut View) -> bool,
     ) -> io::Result<()> {
+        self.run_managed(view, &mut command, &mut tick, |event, view| {
+            if event == super::lifecycle::Event::RecoverableExit
+                || (event == super::lifecycle::Event::Escape
+                    && (view.review.is_some() || view.conflict.as_ref().is_some_and(|c| c.open)))
+            {
+                return Ok(super::lifecycle::Action::Pass);
+            }
+            Ok(
+                if matches!(
+                    event,
+                    super::lifecycle::Event::Quit
+                        | super::lifecycle::Event::Escape
+                        | super::lifecycle::Event::Interrupt
+                ) {
+                    super::lifecycle::Action::Exit
+                } else {
+                    super::lifecycle::Action::Continue
+                },
+            )
+        })
+    }
+    pub fn run_managed(
+        &mut self,
+        view: &mut View,
+        mut command: impl FnMut(&Event, &mut View) -> bool,
+        mut tick: impl FnMut(&mut View) -> bool,
+        mut lifecycle: impl FnMut(
+            super::lifecycle::Event,
+            &mut View,
+        ) -> io::Result<super::lifecycle::Action>,
+    ) -> io::Result<()> {
+        lifecycle(super::lifecycle::Event::Checkpoint, view)?;
         self.start()?;
-        let result = self.run_inner(view, &mut command, &mut tick);
+        let result = self.run_inner(view, &mut command, &mut tick, &mut lifecycle);
         let cleanup = self.shutdown();
         result.and(cleanup)
     }
@@ -132,10 +174,27 @@ impl<T: TerminalIo> TerminalOwner<T> {
         view: &mut View,
         command: &mut impl FnMut(&Event, &mut View) -> bool,
         tick: &mut impl FnMut(&mut View) -> bool,
+        lifecycle: &mut impl FnMut(
+            super::lifecycle::Event,
+            &mut View,
+        ) -> io::Result<super::lifecycle::Action>,
     ) -> io::Result<()> {
         self.io.draw(view)?;
         loop {
+            if let Some(event) = self.io.lifecycle()? {
+                if lifecycle(event, view)? == super::lifecycle::Action::Exit {
+                    return Ok(());
+                }
+                if event == super::lifecycle::Event::Suspend {
+                    self.shutdown()?;
+                    self.io.suspend()?;
+                    self.start()?;
+                    lifecycle(super::lifecycle::Event::Resume, view)?;
+                }
+                self.io.draw(view)?;
+            }
             if tick(view) {
+                lifecycle(super::lifecycle::Event::Checkpoint, view)?;
                 self.io.draw(view)?;
             }
             let Some(event) = self.io.read(Duration::from_millis(100))? else {
@@ -165,13 +224,34 @@ impl<T: TerminalIo> TerminalOwner<T> {
                 Event::Key(key)
                     if view.focused
                         && key.kind == KeyEventKind::Press
-                        && ((key.code == KeyCode::Esc
-                            && view.review.is_none()
-                            && !view.conflict.as_ref().is_some_and(|c| c.open))
+                        && ((key.code == KeyCode::Esc)
                             || (matches!(key.code, KeyCode::Char('q' | 'c'))
                                 && key.modifiers == KeyModifiers::CONTROL)) =>
                 {
-                    return Ok(());
+                    let intent = if key.code == KeyCode::Esc {
+                        super::lifecycle::Event::Escape
+                    } else if key.code == KeyCode::Char('c') {
+                        super::lifecycle::Event::Interrupt
+                    } else {
+                        super::lifecycle::Event::Quit
+                    };
+                    match lifecycle(intent, view)? {
+                        super::lifecycle::Action::Exit => return Ok(()),
+                        super::lifecycle::Action::Pass => command(&Event::Key(key), view),
+                        super::lifecycle::Action::Continue => true,
+                    }
+                }
+                Event::Key(key)
+                    if view.focused
+                        && key.kind == KeyEventKind::Press
+                        && key.code == KeyCode::Char('e')
+                        && key.modifiers == KeyModifiers::CONTROL =>
+                {
+                    match lifecycle(super::lifecycle::Event::RecoverableExit, view)? {
+                        super::lifecycle::Action::Exit => return Ok(()),
+                        super::lifecycle::Action::Pass => command(&Event::Key(key), view),
+                        super::lifecycle::Action::Continue => true,
+                    }
                 }
                 event if view.focused && command(&event, view) => true,
                 event if view.focused => {
@@ -197,6 +277,7 @@ impl<T: TerminalIo> TerminalOwner<T> {
                 _ => false,
             };
             if redraw {
+                lifecycle(super::lifecycle::Event::Checkpoint, view)?;
                 self.io.draw(view)?;
             }
         }
@@ -215,9 +296,15 @@ pub fn bounded_size((width, height): (u16, u16)) -> (u16, u16) {
 #[derive(Default)]
 pub struct CrosstermIo {
     terminal: Option<Terminal<CrosstermBackend<Stdout>>>,
+    #[cfg(unix)]
+    signals: Option<super::lifecycle::Signals>,
 }
 impl TerminalIo for CrosstermIo {
     fn raw_enabled(&mut self) -> io::Result<bool> {
+        #[cfg(unix)]
+        if self.signals.is_none() {
+            self.signals = Some(super::lifecycle::Signals::new()?);
+        }
         terminal::is_raw_mode_enabled()
     }
     fn mode(&mut self, mode: Mode) -> io::Result<()> {
@@ -260,8 +347,39 @@ impl TerminalIo for CrosstermIo {
             .draw(|frame| view::render(frame, view))
             .map(|_| ())
     }
+    fn lifecycle(&mut self) -> io::Result<Option<super::lifecycle::Event>> {
+        #[cfg(unix)]
+        {
+            return Ok(self.signals.as_ref().and_then(|s| s.poll()));
+        }
+        #[cfg(not(unix))]
+        {
+            Ok(None)
+        }
+    }
+    fn suspend(&mut self) -> io::Result<()> {
+        #[cfg(unix)]
+        {
+            signal_hook::low_level::raise(signal_hook::consts::SIGSTOP)
+        }
+        #[cfg(not(unix))]
+        {
+            Err(io::Error::other("native suspend unsupported"))
+        }
+    }
+    fn dispose(&mut self) {
+        self.terminal = None;
+        #[cfg(unix)]
+        {
+            self.signals = None;
+        }
+    }
     fn read(&mut self, timeout: Duration) -> io::Result<Option<Event>> {
-        if event::poll(timeout)? {
+        let ready = match event::poll(timeout) {
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => false,
+            result => result?,
+        };
+        if ready {
             event::read().map(Some)
         } else {
             Ok(None)
@@ -273,62 +391,85 @@ pub fn run<S: editac_session::session::SessionStore>(
     session: &mut super::session::TerminalSession<S>,
     now: u64,
 ) -> io::Result<()> {
-    let recovery_root = session
-        .local_baseline
-        .as_ref()
-        .and_then(|b| b.target().resolved_path().parent())
-        .map(std::path::Path::to_path_buf)
-        .unwrap_or_else(std::env::temp_dir);
-    let mut commands = super::commands::Commands::capture(session, now).ok();
-    let mut view = View::from_session(session, now);
-    if commands.is_none() {
-        if let Some(input) = &mut view.input {
-            input.writable = false;
-        }
-        view.input_message = Some("source preparation unavailable; read only".into());
-    }
-    let collaboration = super::collaboration::Collaboration::capture(session, now)
-        .map_err(|_| io::Error::other("change subscription unavailable"))?;
-    let shared = std::cell::RefCell::new((session, &mut commands, collaboration));
     let clock = || {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(u64::MAX, |d| d.as_secs())
     };
-    TerminalOwner::new(CrosstermIo::default()).run_with_tick(
-        &mut view,
-        |event, view| {
-            let mut state = shared.borrow_mut();
-            let (session, commands, _) = &mut *state;
-            dispatch_command(
-                event,
-                view,
-                session,
-                commands.as_mut(),
-                clock(),
-                &recovery_root,
-            )
-        },
-        |view| {
-            let mut state = shared.borrow_mut();
-            let (session, commands, collaboration) = &mut *state;
-            match collaboration.tick(session, commands.as_mut(), view, clock()) {
-                Ok(changed) => changed,
-                Err(_) => {
-                    let message = "remote update unavailable; retain draft and queued work";
-                    let status = View::from_session(session, clock()).status;
-                    let changed =
-                        view.input_message.as_deref() != Some(message) || view.status != status;
-                    view.status = status;
-                    if let Some(input) = &mut view.input {
-                        input.writable = false;
-                    }
-                    view.input_message = Some(message.into());
-                    changed
-                }
-            }
-        },
+    run_session(
+        session,
+        now,
+        &mut TerminalOwner::new(CrosstermIo::default()),
+        clock,
     )
+}
+/// Canonical command/collaboration/lifecycle orchestration used by the binary and tests.
+pub fn run_session<S: editac_session::session::SessionStore, T: TerminalIo>(
+    session: &mut super::session::TerminalSession<S>,
+    now: u64,
+    terminal: &mut TerminalOwner<T>,
+    clock: impl Fn() -> u64,
+) -> io::Result<()> {
+    let mut recovery = session
+        .recovery
+        .take()
+        .ok_or_else(|| io::Error::other("private draft recovery owner required"))?;
+    let result = (|| {
+        let root = recovery.root().to_path_buf();
+        let mut commands = super::commands::Commands::capture(session, now).ok();
+        let mut view = View::from_session(session, now);
+        recovery.restore_view(session, &mut view)?;
+        if commands.is_none() {
+            if let Some(input) = &mut view.input {
+                input.writable = false;
+            }
+            view.input_message = Some("source preparation unavailable; read only".into());
+        }
+        let collaboration = super::collaboration::Collaboration::capture(session, now)
+            .map_err(|_| io::Error::other("change subscription unavailable"))?;
+        let shared = std::cell::RefCell::new((&mut *session, &mut commands, collaboration));
+        let result = terminal.run_managed(
+            &mut view,
+            |event, view| {
+                let mut state = shared.borrow_mut();
+                let (session, commands, _) = &mut *state;
+                dispatch_command(event, view, session, commands.as_mut(), clock(), &root)
+            },
+            |view| {
+                let mut state = shared.borrow_mut();
+                let (session, commands, collaboration) = &mut *state;
+                match collaboration.tick(session, commands.as_mut(), view, clock()) {
+                    Ok(changed) => changed,
+                    Err(_) => {
+                        let message = "remote update unavailable; retain draft and queued work";
+                        let status = View::from_session(session, clock()).status;
+                        let changed =
+                            view.input_message.as_deref() != Some(message) || view.status != status;
+                        view.status = status;
+                        if let Some(i) = &mut view.input {
+                            i.writable = false;
+                        }
+                        view.input_message = Some(message.into());
+                        changed
+                    }
+                }
+            },
+            |event, view| {
+                let mut state = shared.borrow_mut();
+                let (session, commands, _) = &mut *state;
+                recovery.handle(event, session, commands.as_mut(), view, clock())
+            },
+        );
+        let mut state = shared.borrow_mut();
+        let (session, commands, _) = &mut *state;
+        let finished = recovery.finish(session, commands.as_ref(), &view);
+        finished.and(result)
+    })();
+    // Includes failures during view/observer acquisition, before terminal startup.
+    session.service.detach_transport();
+    let cleanup = terminal.shutdown();
+    session.recovery = Some(recovery);
+    result.and(cleanup)
 }
 
 /// Shared by the real terminal loop and deterministic injected-event checks.
