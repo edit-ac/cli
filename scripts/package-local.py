@@ -44,6 +44,7 @@ for package in metadata['packages']:
 files = {
     'bin/editac': pathlib.Path(args.binary).read_bytes(),
     'README.md': (root / 'README.md').read_bytes(),
+    'docs/tui.md': (root / 'docs/tui.md').read_bytes(),
     'LICENSE': (root / 'LICENSE').read_bytes(),
     'THIRD_PARTY_NOTICES.md': (root / 'THIRD_PARTY_NOTICES.md').read_bytes(),
     'provenance/core.json': (root / 'vendor/core/provenance.json').read_bytes(),
@@ -54,7 +55,8 @@ for path in sorted((root / 'licenses').rglob('*')):
         files[str(path.relative_to(root))] = path.read_bytes()
 manifest = {
     'kind': args.profile + '-workflow development artifact; no publication',
-    'capabilities': ['local-edit', 'hosted-edit', 'offline-cache', 'sync', 'status', 'recover', 'diagnostics'],
+    'capabilities': ['local-edit', 'hosted-edit', 'offline-cache', 'sync', 'status', 'recover', 'diagnostics', 'tui'],
+    'terminalGuide': 'docs/tui.md',
     'sourceRevision': args.revision,
     'buildHost': target,
     'rustc': rust,

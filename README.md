@@ -1,9 +1,26 @@
 # edit.ac CLI
 
-A local Markdown and literal UTF-8 editor client. Editing requires an external
-editor executable, no account and no network connection. Optional hosted editing
+A local Markdown and literal UTF-8 editor client with a built-in terminal UI and
+an external-editor mode. Local editing requires no account or network connection. Optional hosted editing
 uses an explicitly configured service adapter and private native cache. Native artifacts
 are development builds; no registry release or publication is claimed.
+
+Start the terminal editor from an interactive terminal:
+
+```sh
+editac tui --help
+editac tui notes.md --store /absolute/private/notes.sqlite
+editac tui notes.txt --create --store /absolute/private/new-notes.sqlite
+```
+
+Create the private parent directory first (mode 0700). Use a new store for each
+new target; reuse the same store/target to recover. Ctrl-S saves; Ctrl-Q quits
+and retains drafts without automatically saving the file. The packaged
+[terminal guide](docs/tui.md) covers keys, hosted catalog grants, conflict/recovery,
+save states and the actual support matrix. macOS arm64 PTY qualification does
+not qualify a terminal application or accessibility stack.
+
+External-editor commands remain available:
 
 ```sh
 editac edit notes.md --editor 'vim -f'
@@ -92,7 +109,7 @@ cargo +1.97.1 build --release --locked --offline
 python3 scripts/package-local.py --binary target/release/editac --output target/local-package --revision "$(git rev-parse HEAD)"
 ```
 
-The archive contains the binary, this guide, Apache-2.0 license, third-party
+The archive contains the binary, this README, `docs/tui.md`, Apache-2.0 license, third-party
 notices, immutable source provenance and per-file hashes. Packaging is local;
 Cargo publishing stays disabled. Qualification counts, failures and platform
 limits are recorded in the architecture local-client evidence receipt.

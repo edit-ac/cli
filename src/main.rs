@@ -4,8 +4,10 @@ use std::{ffi::OsString, path::PathBuf, process::ExitCode};
 const HELP: &str = "editac — local-first editor client
 
 Usage: editac [--help | --version]
-       editac tui <path> --store <new-absolute-db> [--create] [--format <markdown|text>]
-       editac tui <ac-reference|configured-app-url> --catalog <host-granted-json> [--offline]
+       editac tui --help
+       editac tui <path> --store <absolute-db> [--create] [--format <markdown|text>]
+       editac tui <ac-reference|configured-app-url> --catalog <host-granted-json>
+         [--offline | --adapter <absolute-host-executable>]
        editac edit <path> [--create] [--format <markdown|text>]
          [--editor <configuration>] [--recovery-dir <private-directory>]
        editac edit <hosted-url> --service-config <json> --cache-dir <private-parent>
@@ -30,6 +32,47 @@ Inspection emits safe counts/codes. Remote durability is not assessed.
 Conversion requires explicit loss/overwrite consent and preserves the source.
 Hosted online editing requires an explicit configured host adapter.
 Offline hosted editing and status use an existing private cache without credentials.";
+
+const TUI_HELP: &str = "editac tui — built-in source editor (development artifact)
+
+Usage: editac tui --help
+       editac tui <path> --store <absolute-db> [--create] [--format <markdown|text>]
+       editac tui <ac-reference|configured-app-url> --catalog <host-granted-json>
+         [--offline | --adapter <absolute-host-executable>]
+
+Local: .md is Markdown; .txt is literal UTF-8; other suffixes require --format.
+Missing files require --create. Use a new absolute --store path for a new session;
+reuse it with the same target to recover. Keep the store and its .tui-recovery
+directory. Local files open without an account, network or MCP server.
+Hosted: the host grants catalog identity, authority, private store and permission.
+ac://DOC_ID is a mutable identifier, not a credential. Unknown URLs and uncached
+identities fail closed. No adapter is started without explicit --adapter;
+--offline rejects --adapter. Never put credentials in targets or catalog data.
+
+Keys (source): arrows/Home/End move; Shift extends selection; Ctrl-A selects all.
+Enter/Tab insert literal line break/tab; Backspace/Delete edit; bracketed paste
+is literal and bounded. Ctrl-S commits and saves; Ctrl-Enter commits locally.
+Ctrl-Z/Ctrl-Y undo/redo committed local history (commit the draft first).
+Ctrl-D opens/closes revision-labeled diff; Esc returns from diff.
+Ctrl-E exports private recovery; Ctrl-R retries storage recovery.
+Conflict: Ctrl-T reopens; Tab switches base/local/current/resolution panes;
+Ctrl-L/Ctrl-G choose local/current; edit resolution, Ctrl-P prepares,
+Ctrl-Enter applies against current revision; Esc cancels the view, retaining drafts.
+Ctrl-Q quits; Esc in source also quits; Ctrl-C interrupts. Quit preserves a draft,
+not an automatic file save. On flush failure: Ctrl-R recovers, Ctrl-Q retries,
+Ctrl-E exits with private recovery, Esc cancels exit.
+
+Status distinguishes draft, local persistence, pending upload and remote durability.
+Saved local bytes or a completed send never imply a remote receipt. Read-only
+sessions reject all mutations; permitted review/private export remain available.
+Markdown structural/ambiguous/unknown-content changes may be refused; retain or
+export the draft. No-op keeps source spelling. Text mode has no Markdown shortcuts.
+Without a TTY, opening returns a noninteractive session report, not an edit loop.
+
+Guide and qualification matrix: docs/tui.md in the extracted package.
+Qualified runtime: macOS arm64 test-host PTY, xterm-256color protocol only.
+Terminal applications, accessibility, other OS/architectures remain unqualified.
+External-editor mode remains available: editac edit <path> --editor <configuration>.";
 
 fn data_command(args: &[OsString]) -> Result<(), String> {
     let operation = args[0].to_str().ok_or("invalid-command")?;
@@ -154,6 +197,7 @@ fn main() -> ExitCode {
             env!("CARGO_PKG_VERSION"),
             editac_cli::EDITOR_REVISION
         ),
+        [command, flag] if command == "tui" && flag == "--help" => println!("{TUI_HELP}"),
         [command, ..] if command == "tui" => {
             let result = editac_cli::tui::session::Request::parse(&args)
                 .and_then(|request| request.open().map(|session| (session, request.adapter)));
