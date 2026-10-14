@@ -1,9 +1,12 @@
 use editac_cli::diagnostics::{self, Format};
 use std::{ffi::OsString, path::PathBuf, process::ExitCode};
 
-const HELP: &str = "editac — local-first editor client scaffold
+const HELP: &str = "editac — local-first editor client
 
 Usage: editac [--help | --version]
+       editac edit <path> [--create] [--format <markdown|text>]
+         [--editor <configuration>] [--recovery-dir <private-directory>]
+       editac recover <session-directory> [--output <new-path>]
        editac validate <path> --input-format <markdown|json|update> [--base <path>]
        editac inspect <path> --input-format <markdown|json|update> [--base <path>]
        editac convert <path> --input-format <markdown|json|update>
@@ -17,7 +20,7 @@ Diagnostics are secondary interchange operations. Update inputs are identified
 JSON envelopes; incremental updates require an initialized identified --base.
 Inspection emits safe counts/codes. Remote durability is not assessed.
 Conversion requires explicit loss/overwrite consent and preserves the source.
-No editing or hosted document commands are implemented.";
+Hosted document commands are unavailable.";
 
 fn data_command(args: &[OsString]) -> Result<(), String> {
     let operation = args[0].to_str().ok_or("invalid-command")?;
@@ -90,6 +93,48 @@ fn data_command(args: &[OsString]) -> Result<(), String> {
     }
     Ok(())
 }
+fn local_command(args: &[OsString]) -> Result<(), String> {
+    let path = PathBuf::from(args.get(1).ok_or("path-required")?);
+    let mut options = editac_cli::target::ResolveOptions::default();
+    let (mut editor, mut recovery, mut output) = (None, None, None);
+    let mut seen = std::collections::HashSet::new();
+    let mut i = 2;
+    while i < args.len() {
+        let flag = args[i].to_str().ok_or("invalid-option")?;
+        if !seen.insert(flag) {
+            return Err("duplicate-option".into());
+        }
+        if flag == "--create" && args[0] == "edit" {
+            options.create = true;
+            i += 1;
+            continue;
+        }
+        i += 1;
+        let value = args.get(i).ok_or("option-value-required")?;
+        match flag {
+            "--format" if args[0] == "edit" => {
+                options.format = Some(
+                    editac_cli::target::Format::parse(value.to_str().ok_or("invalid-format")?)
+                        .map_err(|e| e.to_string())?,
+                )
+            }
+            "--editor" if args[0] == "edit" => {
+                editor = Some(value.to_str().ok_or("invalid-editor")?)
+            }
+            "--recovery-dir" if args[0] == "edit" => recovery = Some(PathBuf::from(value)),
+            "--output" if args[0] == "recover" => output = Some(PathBuf::from(value)),
+            _ => return Err("unexpected-option".into()),
+        }
+        i += 1;
+    }
+    let result = if args[0] == "edit" {
+        editac_cli::local::edit(&path, options, editor, recovery.as_deref())?
+    } else {
+        editac_cli::local::recover(&path, output.as_deref())?
+    };
+    println!("{result}");
+    Ok(())
+}
 fn main() -> ExitCode {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     match args.as_slice() {
@@ -100,6 +145,12 @@ fn main() -> ExitCode {
             env!("CARGO_PKG_VERSION"),
             editac_cli::EDITOR_REVISION
         ),
+        [command, ..] if matches!(command.to_str(), Some("edit" | "recover")) => {
+            if let Err(error) = local_command(&args) {
+                eprintln!("{error}. Run editac --help.");
+                return ExitCode::from(2);
+            }
+        }
         [command, ..] if matches!(command.to_str(), Some("validate" | "inspect" | "convert")) => {
             if let Err(error) = data_command(&args) {
                 eprintln!("{error}. Run editac --help.");
@@ -107,9 +158,7 @@ fn main() -> ExitCode {
             }
         }
         _ => {
-            eprintln!(
-                "Unsupported argument. Run editac --help; no editing or hosted commands are implemented."
-            );
+            eprintln!("Unsupported argument. Run editac --help; hosted commands are unavailable.");
             return ExitCode::from(2);
         }
     }

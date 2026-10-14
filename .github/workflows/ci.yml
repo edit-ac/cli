@@ -9,16 +9,23 @@ permissions:
 
 jobs:
   check:
-    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - name: Select Rust
         run: rustup toolchain install 1.97.1 --profile minimal --component rustfmt
+      - run: cargo +1.97.1 fetch --locked
       - run: cargo fmt --all -- --check
       - run: cargo check --all-targets --locked --offline
       - run: cargo test --locked --offline
+      - run: cargo +1.97.1 build --release --locked --offline
+      - run: python3 scripts/package-local.py --binary target/release/editac --output target/local-package --revision "$GITHUB_SHA"
+      - run: python3 scripts/probe-local.py --archive target/local-package/editac-local.tar.gz --fixture tests/fixtures/workflows/editor.sh --receipt target/local-package/probes.json
       - name: Check supported commands
         run: |
           cargo run --locked --offline -- --help

@@ -15,6 +15,8 @@ fn help_lists_only_implemented_options() {
     assert!(output.stderr.is_empty());
     let help = String::from_utf8(output.stdout).unwrap();
     for command in [
+        "edit <path>",
+        "recover <session-directory>",
         "validate <path>",
         "inspect <path>",
         "convert <path>",
@@ -25,8 +27,8 @@ fn help_lists_only_implemented_options() {
     ] {
         assert!(help.contains(command), "{command}");
     }
-    assert!(help.contains("No editing or hosted document commands are implemented."));
-    for command in ["editac edit", "editac sync", "editac status"] {
+    assert!(help.contains("Hosted document commands are unavailable."));
+    for command in ["editac sync", "editac status"] {
         assert!(!help.contains(command));
     }
 }
@@ -57,13 +59,13 @@ fn version_reports_the_pinned_engine_without_claiming_release() {
 
 #[test]
 fn unimplemented_commands_fail_without_touching_targets() {
-    for command in ["edit", "status", "sync"] {
+    for command in ["status", "sync"] {
         let output = run(&[command, "/nonexistent/document.md"]);
         assert_eq!(output.status.code(), Some(2), "{command}");
         assert!(output.stdout.is_empty());
         assert_eq!(
             String::from_utf8(output.stderr).unwrap(),
-            "Unsupported argument. Run editac --help; no editing or hosted commands are implemented.\n"
+            "Unsupported argument. Run editac --help; hosted commands are unavailable.\n"
         );
     }
 }

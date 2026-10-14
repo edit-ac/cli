@@ -2,7 +2,7 @@
 //!
 //! The engine owns committed state. Markdown prepares inert content and source
 //! edits for that engine; a source buffer is never a second writable replica.
-//! Including these APIs does not enable document commands in the binary.
+//! Local command orchestration reuses these APIs without attaching a transport.
 
 pub use editac_core as engine;
 pub use editac_markdown as markdown;
@@ -27,3 +27,6 @@ pub mod storage;
 
 /// Bounded secondary interchange operations; no transport or remote receipt.
 pub mod diagnostics;
+
+/// Actual local editing and explicit recovery command orchestration.
+pub mod local;
