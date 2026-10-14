@@ -150,6 +150,54 @@ pub struct HostedSession {
     pub authorized_online: bool,
 }
 
+#[derive(Debug)]
+pub enum HostedSourceError {
+    Draft(crate::storage::StorageError),
+    Conflict(crate::reconcile::HostedConflict),
+}
+impl std::fmt::Display for HostedSourceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Draft(e) => write!(f, "draft persistence failed: {e}; retain editor source"),
+            Self::Conflict(e) => e.fmt(f),
+        }
+    }
+}
+impl std::error::Error for HostedSourceError {}
+
+impl HostedSession {
+    pub fn source_baseline(
+        &self,
+    ) -> Result<crate::reconcile::HostedBaseline, crate::reconcile::ReconcileError> {
+        crate::reconcile::HostedBaseline::capture(&self.recovery.document)
+    }
+    /// Structured receives advance this exact replica. No parsing, bootstrap,
+    /// history reset or Markdown import occurs. Transport/durability is separate.
+    pub fn apply_received(
+        &mut self,
+        update: &crate::engine::document::ReplayUpdate,
+    ) -> Result<(), crate::engine::document::DocumentError> {
+        self.recovery.document.apply_replay(update)
+    }
+    /// Preserve the exact unresolved editor source at the native draft boundary
+    /// before parsing or preparing any mutation. This is not a saved CRDT update.
+    pub fn prepare_source(
+        &self,
+        baseline: &crate::reconcile::HostedBaseline,
+        source: &str,
+    ) -> Result<crate::reconcile::PreparedHostedEdit, HostedSourceError> {
+        self.storage
+            .persist_draft(&crate::storage::Draft {
+                baseline: baseline.opening().source.clone(),
+                source: source.into(),
+            })
+            .map_err(HostedSourceError::Draft)?;
+        baseline
+            .prepare(&self.recovery.document, source)
+            .map_err(HostedSourceError::Conflict)
+    }
+}
+
 fn service_error(error: ServiceError) -> HostedError {
     match error {
         ServiceError::Authorization => HostedError::Authorization,
@@ -217,13 +265,17 @@ pub fn open(
     if exists {
         let storage = NativeStorage::open(&path, config.identity.clone())
             .map_err(|_| HostedError::CacheRecoveryRequired)?;
-        let recovery = storage.recover().map_err(|error| {
+        let mut recovery = storage.recover().map_err(|error| {
             if error.kind == FailureKind::IncompatibleIdentity {
                 HostedError::IncompatibleIdentity
             } else {
                 HostedError::CacheRecoveryRequired
             }
         })?;
+        recovery
+            .document
+            .enable_history(Default::default())
+            .map_err(|_| HostedError::CacheRecoveryRequired)?;
         return Ok(HostedSession {
             recovery,
             storage,
@@ -240,7 +292,10 @@ pub fn open(
     if checkpoint.identity != config.identity {
         return Err(HostedError::IncompatibleIdentity);
     }
-    let document = Document::restore(&config.identity, &checkpoint, &[])
+    let mut document = Document::restore(&config.identity, &checkpoint, &[])
+        .map_err(|_| HostedError::InvalidBootstrap)?;
+    document
+        .enable_history(Default::default())
         .map_err(|_| HostedError::InvalidBootstrap)?;
     // Reserve creation exclusively. A concurrent opener cannot initialize over
     // this directory; it must retry recovery after the other publisher finishes.

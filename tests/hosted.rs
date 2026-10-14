@@ -1,188 +1,19 @@
 //! CLI-1.7 canonical prepared authorization -> real replica/native cache harness.
 use editac_cli::{
-    auth::{AuthError, Credential, CredentialStore},
+    auth::Credential,
     engine::{
         Utf16Offset,
         anchors::Bias,
         commands::text::{TextCommand, TextOrigin},
-        document::{CreationPermit, DocumentIdentity, InitializedCheckpoint},
+        document::DocumentIdentity,
     },
-    hosted::{self, HostedError, ServiceAdapter, ServiceConfig, ServiceError},
-    reconcile::LocalBaseline,
+    hosted::{self, HostedError, ServiceConfig, ServiceError},
     storage::Draft,
-    target::{ResolveOptions, resolve},
 };
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    sync::atomic::{AtomicUsize, Ordering},
-};
-const TOKEN: &str = "prepared-secret-never-recorded";
-#[derive(Default)]
-struct Credentials {
-    calls: usize,
-    absent: bool,
-    failed: bool,
-}
-impl CredentialStore for Credentials {
-    fn load(&mut self, endpoint: &str) -> Result<Option<Credential>, AuthError> {
-        self.calls += 1;
-        assert_eq!(endpoint, "https://api.example.test/documents");
-        if self.failed {
-            return Err(AuthError::Unavailable);
-        }
-        if self.absent {
-            return Ok(None);
-        }
-        Ok(Some(Credential::new(TOKEN.into()).unwrap()))
-    }
-}
-struct Service {
-    identity: DocumentIdentity,
-    checkpoint: InitializedCheckpoint,
-    resolves: usize,
-    bootstraps: usize,
-    failure: Option<ServiceError>,
-    bootstrap_failure: Option<ServiceError>,
-}
-impl ServiceAdapter for Service {
-    fn resolve(
-        &mut self,
-        endpoint: &str,
-        id: &str,
-        credential: &Credential,
-    ) -> Result<DocumentIdentity, ServiceError> {
-        self.resolves += 1;
-        assert_eq!(endpoint, "https://api.example.test/documents");
-        assert!(!id.is_empty());
-        assert_eq!(credential.expose_to_adapter(), TOKEN);
-        if let Some(error) = self.failure {
-            return Err(error);
-        }
-        Ok(self.identity.clone())
-    }
-    fn bootstrap(
-        &mut self,
-        _: &str,
-        _: &DocumentIdentity,
-        credential: &Credential,
-    ) -> Result<InitializedCheckpoint, ServiceError> {
-        self.bootstraps += 1;
-        assert_eq!(credential.expose_to_adapter(), TOKEN);
-        if let Some(error) = self.bootstrap_failure {
-            return Err(error);
-        }
-        Ok(self.checkpoint.clone())
-    }
-}
-struct Harness {
-    root: PathBuf,
-    server_projection: editac_cli::engine::projection::Snapshot,
-    identity: DocumentIdentity,
-    config: ServiceConfig,
-    url: String,
-    credentials: Credentials,
-    service: Service,
-}
-impl Harness {
-    fn new() -> Self {
-        static NEXT: AtomicUsize = AtomicUsize::new(1);
-        let n = NEXT.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!("editac-hosted-{}-{n}", std::process::id()));
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::DirBuilderExt;
-            fs::DirBuilder::new().mode(0o700).create(&root).unwrap();
-        }
-        let identity = DocumentIdentity::v5(
-            format!("ac000000-0000-4000-8000-{n:012x}"),
-            "ac000000-0000-4000-8000-000000000000",
-        )
-        .unwrap();
-        let path = root.join("server.md");
-        fs::write(&path, include_str!("fixtures/hosted/source.md")).unwrap();
-        let target = resolve(&path, ResolveOptions::default()).unwrap();
-        let (document, _) = LocalBaseline::import(
-            target,
-            CreationPermit::authorize_new(identity.clone()).unwrap(),
-        )
-        .unwrap();
-        let checkpoint = document.checkpoint();
-        let server_projection = document.snapshot().unwrap();
-        let config = configuration(identity.clone());
-        let url = format!("https://app.example.test/ac/{}", identity.document_id);
-        Self {
-            root,
-            server_projection,
-            identity: identity.clone(),
-            config,
-            url,
-            credentials: Credentials::default(),
-            service: Service {
-                identity,
-                checkpoint,
-                resolves: 0,
-                bootstraps: 0,
-                failure: None,
-                bootstrap_failure: None,
-            },
-        }
-    }
-    fn open(&mut self, offline: bool) -> Result<hosted::HostedSession, HostedError> {
-        hosted::open(
-            &self.url,
-            &self.config,
-            &self.root,
-            offline,
-            &mut self.credentials,
-            &mut self.service,
-        )
-    }
-    fn cache(&self) -> PathBuf {
-        self.config.cache_path(&self.root)
-    }
-    fn rejected(&mut self, offline: bool, expected: HostedError) {
-        match self.open(offline) {
-            Err(error) => assert_eq!(error, expected),
-            Ok(_) => panic!("unexpected hosted admission"),
-        }
-    }
-    fn bytes(&self) -> Vec<(String, Vec<u8>)> {
-        tree(&self.cache())
-    }
-}
-impl Drop for Harness {
-    fn drop(&mut self) {
-        fs::remove_dir_all(&self.root).unwrap();
-    }
-}
-fn configuration(identity: DocumentIdentity) -> ServiceConfig {
-    ServiceConfig::new(
-        "app.example.test".into(),
-        "https://api.example.test/documents".into(),
-        identity,
-    )
-    .unwrap()
-}
-fn tree(root: &Path) -> Vec<(String, Vec<u8>)> {
-    if !root.exists() {
-        return vec![];
-    }
-    let mut result = vec![];
-    for entry in fs::read_dir(root).unwrap() {
-        let entry = entry.unwrap();
-        if entry.path().is_dir() {
-            result.extend(tree(&entry.path()));
-        } else {
-            result.push((
-                entry.file_name().to_string_lossy().into(),
-                fs::read(entry.path()).unwrap(),
-            ));
-        }
-    }
-    result.sort();
-    result
-}
+use std::fs;
+#[path = "support/hosted.rs"]
+mod harness;
+use harness::*;
 #[test]
 fn authorized_bootstrap_restores_exact_shared_checkpoint_once() {
     let mut h = Harness::new();

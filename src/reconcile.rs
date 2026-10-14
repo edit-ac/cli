@@ -257,3 +257,166 @@ pub struct ReconciledEdit {
     /// None for a semantic no-op (including spelling-only edits).
     pub commit: Option<EditorCommit>,
 }
+
+/// A deterministic hosted projection plus complete retained CRDT evidence.
+/// Markdown alone cannot represent unknown attributes, marks or module data.
+#[derive(Clone, Debug)]
+pub struct HostedProjection {
+    pub source: String,
+    pub checkpoint: crate::engine::document::InitializedCheckpoint,
+    pub snapshot: crate::engine::projection::Snapshot,
+    pub diagnostics: Vec<crate::markdown::import::Diagnostic>,
+}
+impl HostedProjection {
+    pub fn capture(document: &Document) -> Result<Self, ReconcileError> {
+        let snapshot = document.snapshot().map_err(engine)?;
+        let mut diagnostics = Vec::new();
+        let mut blocks = Vec::new();
+        for node in snapshot.visible.iter().filter(|n| n.kind == "block") {
+            match document.fragment_for_node(&node.id) {
+                Ok(block) => blocks.push(block),
+                Err(_) => {
+                    // An inert text projection for an opaque block. The shared
+                    // mapper marks this binding unsupported; editing it fails.
+                    diagnostics.push(crate::markdown::import::Diagnostic {
+                        code: "opaque-hosted-block",
+                        range: 0..0,
+                    });
+                    blocks.push(FragmentBlock {
+                        runs: node
+                            .runs
+                            .iter()
+                            .map(|r| FragmentRun {
+                                text: r.text.clone(),
+                                marks: vec![],
+                            })
+                            .collect(),
+                        attributes: Some(crate::engine::document::BlockAttributes::Paragraph),
+                        containers: vec![],
+                        checked: None,
+                    });
+                }
+            }
+        }
+        let exported = crate::markdown::export::export(&blocks);
+        diagnostics.extend(exported.diagnostics);
+        Ok(Self {
+            source: exported.markdown,
+            checkpoint: document.checkpoint(),
+            snapshot,
+            diagnostics,
+        })
+    }
+}
+
+/// Opening source/semantic bindings stay fixed while remote updates advance
+/// the existing replica. No hosted save ever imports a replacement document.
+pub struct HostedBaseline {
+    opening: HostedProjection,
+    baseline: SourceBaseline,
+}
+impl HostedBaseline {
+    pub fn capture(document: &Document) -> Result<Self, ReconcileError> {
+        let opening = HostedProjection::capture(document)?;
+        let owners = opening
+            .snapshot
+            .visible
+            .iter()
+            .filter(|n| n.kind == "block")
+            .map(|n| n.id.clone())
+            .collect::<Vec<_>>();
+        let baseline = SourceBaseline::capture(
+            document,
+            &opening.source,
+            SourceMode::Markdown(Codecs::default()),
+            &owners,
+        )
+        .map_err(ReconcileError::Shared)?;
+        Ok(Self { opening, baseline })
+    }
+    pub fn opening(&self) -> &HostedProjection {
+        &self.opening
+    }
+    pub fn prepare(
+        &self,
+        document: &Document,
+        source: &str,
+    ) -> Result<PreparedHostedEdit, HostedConflict> {
+        match self.baseline.prepare(
+            document,
+            source,
+            &TextOrigin::new("cli:hosted-source-edit").expect("static origin"),
+        ) {
+            Ok(plan) => Ok(PreparedHostedEdit {
+                plan,
+                opening: self.opening.clone(),
+                source: source.into(),
+            }),
+            Err(error) => Err(HostedConflict::capture(
+                ReconcileError::Shared(error),
+                self.opening.clone(),
+                source.into(),
+                document,
+            )),
+        }
+    }
+}
+
+/// Every conflict retains exact base/local source and complete current state,
+/// including unsupported semantics. Projection failure never loses the draft.
+#[derive(Debug)]
+pub struct HostedConflict {
+    pub error: ReconcileError,
+    pub base: HostedProjection,
+    pub local: String,
+    pub current: Result<HostedProjection, ReconcileError>,
+    pub current_checkpoint: crate::engine::document::InitializedCheckpoint,
+}
+impl HostedConflict {
+    fn capture(
+        error: ReconcileError,
+        base: HostedProjection,
+        local: String,
+        document: &Document,
+    ) -> Self {
+        Self {
+            error,
+            base,
+            local,
+            current: HostedProjection::capture(document),
+            current_checkpoint: document.checkpoint(),
+        }
+    }
+}
+impl std::fmt::Display for HostedConflict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}; base/local/current retained", self.error)
+    }
+}
+impl std::error::Error for HostedConflict {}
+
+pub struct PreparedHostedEdit {
+    plan: PreparedSourceEdit,
+    opening: HostedProjection,
+    source: String,
+}
+impl PreparedHostedEdit {
+    pub fn changed_blocks(&self) -> usize {
+        self.plan.changed
+    }
+    /// Commit one guarded history operation. Native durability and upload are
+    /// separate boundaries; the caller retains the draft until they succeed.
+    pub fn commit(
+        self,
+        document: &mut Document,
+    ) -> Result<crate::markdown::reconcile::SourceCommit, HostedConflict> {
+        self.plan.commit(document).map_err(|error| {
+            HostedConflict::capture(
+                ReconcileError::Shared(error),
+                self.opening,
+                self.source,
+                document,
+            )
+        })
+    }
+}
