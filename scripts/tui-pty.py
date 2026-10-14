@@ -191,6 +191,8 @@ def run(binary, root, output, config):
                 pump()
             elif 'replace_file' in action:
                 (root / 'source.md').write_text(action['replace_file'])
+            elif 'release_remote' in action:
+                (root / 'remote-ready').touch()
             elif 'make_recovery_unwritable' in action:
                 # Deterministic filesystem failure, even under privileged test users.
                 recovery = root / 'cache.sqlite.tui-recovery' / 'draft.json'
@@ -219,7 +221,7 @@ def run(binary, root, output, config):
                 proc.terminate()
                 try:
                     pump(0.3)
-                    proc.wait(timeout=1)
+                    proc.wait(timeout=4)
                 except subprocess.TimeoutExpired:
                     proc.kill()
                     # Closing the controller's terminal handles unblocks Darwin

@@ -1,49 +1,422 @@
 {
-  "markdown_history": {"actions": [
-    {"expect":"# Seed"}, {"paste":"Edited "}, {"expect":"Edited # Seed"},
-    {"keys":"\u0004"}, {"expect":"Exact source (UTF-8 bytes)"},
-    {"expect":"+Edited # Seed"}, {"keys":"\u0004"},
-    {"keys":"\u0013"}, {"expect":"Save: committed locally"},
-    {"keys":"\u001a"}, {"expect":"Undo: committed locally"},
-    {"keys":"\u0019"}, {"expect":"Redo: committed locally"},
-    {"keys":"\u0013"}, {"expect":"Save: no semantic change"}, {"keys":"\u0011"}
-  ]},
-  "literal_unicode": {"actions": [
-    {"expect":"seed"}, {"paste":"**literal** 🦀 é 中\n"},
-    {"keys":"\u0013"}, {"expect":"Save: committed locally"}, {"keys":"\u0011"}
-  ]},
-  "readonly": {"actions": [
-    {"expect":"read only"}, {"paste":"Forbidden"}, {"keys":"X\u0013\u001a\u0019"},
-    {"expect":"command unavailable; read only"}, {"keys":"\u0004"}, {"expect":"Hosted projected Markdown"},
-    {"keys":"\u001b"}, {"keys":"\u0011"}
-  ]},
-  "hosted_commit": {"actions": [
-    {"expect":"hosted projection"}, {"paste":"Cached "}, {"keys":"\u0013"},
-    {"expect":"Save: committed locally"}, {"expect":"pending 1"}, {"keys":"\u0011"}
-  ]},
-  "hosted_restart": {"actions": [
-    {"expect":"Cached # Seed"}, {"expect":"pending 1"}, {"keys":"\u0011"}
-  ]},
-  "draft_quit": {"actions": [
-    {"expect":"# Seed"}, {"paste":"Draft "}, {"expect":"Draft # Seed"}, {"keys":"\u0011"}
-  ]},
-  "draft_restart": {"actions": [
-    {"expect":"Draft # Seed"}, {"expect":"pending 0"}, {"keys":"\u0011"}
-  ]},
-  "resize": {"actions": [
-    {"expect":"\\x1b[31munsafe"}, {"resize":[64,12]}, {"expect":"# Seed"},
-    {"keys":"\u001b[O"}, {"paste":"Ignored"}, {"keys":"\u001b[I"},
-    {"expect":"# Seed"}, {"resize":[120,24]}, {"expect":"\\x1b[31munsafe"}, {"keys":"\u0011"}
-  ]},
-  "file_conflict": {"actions": [
-    {"expect":"# Seed"}, {"paste":"Local "}, {"replace_file":"External\n"},
-    {"keys":"\u0013"}, {"expect":"file publication"}, {"keys":"\u0011"}
-  ]},
-  "error_exit": {"exit":2,"actions": [
-    {"expect":"# Seed"}, {"make_recovery_unwritable":true}, {"paste":"Unsaved "},
-    {"expect":"Draft checkpoint failed"}, {"signal":"SIGTERM"}
-  ]},
-  "intentional_failure": {"actions": [
-    {"expect":"# Seed"}, {"expect":"THIS_MARKER_MUST_NEVER_EXIST"}
-  ]}
+  "markdown_history": {
+    "actions": [
+      {
+        "expect": "# Seed"
+      },
+      {
+        "paste": "Edited "
+      },
+      {
+        "expect": "Edited # Seed"
+      },
+      {
+        "keys": "\u0004"
+      },
+      {
+        "expect": "Exact source (UTF-8 bytes)"
+      },
+      {
+        "expect": "+Edited # Seed"
+      },
+      {
+        "keys": "\u0004"
+      },
+      {
+        "keys": "\u0013"
+      },
+      {
+        "expect": "Save: committed locally"
+      },
+      {
+        "keys": "\u001a"
+      },
+      {
+        "expect": "Undo: committed locally"
+      },
+      {
+        "keys": "\u0019"
+      },
+      {
+        "expect": "Redo: committed locally"
+      },
+      {
+        "keys": "\u0013"
+      },
+      {
+        "expect": "Save: no semantic change"
+      },
+      {
+        "keys": "\u0011"
+      }
+    ]
+  },
+  "literal_unicode": {
+    "actions": [
+      {
+        "expect": "seed"
+      },
+      {
+        "paste": "**literal** 🦀 é 中\n"
+      },
+      {
+        "keys": "\u0013"
+      },
+      {
+        "expect": "Save: committed locally"
+      },
+      {
+        "keys": "\u0011"
+      }
+    ]
+  },
+  "readonly": {
+    "actions": [
+      {
+        "expect": "read only"
+      },
+      {
+        "paste": "Forbidden"
+      },
+      {
+        "keys": "X\u0013\u001a\u0019"
+      },
+      {
+        "expect": "command unavailable; read only"
+      },
+      {
+        "keys": "\u0004"
+      },
+      {
+        "expect": "Hosted projected Markdown"
+      },
+      {
+        "keys": "\u001b"
+      },
+      {
+        "keys": "\u0011"
+      }
+    ]
+  },
+  "hosted_commit": {
+    "actions": [
+      {
+        "expect": "hosted projection"
+      },
+      {
+        "paste": "Cached "
+      },
+      {
+        "keys": "\u0013"
+      },
+      {
+        "expect": "Save: committed locally"
+      },
+      {
+        "expect": "pending 1"
+      },
+      {
+        "keys": "\u0011"
+      }
+    ]
+  },
+  "hosted_restart": {
+    "actions": [
+      {
+        "expect": "Cached # Seed"
+      },
+      {
+        "expect": "pending 1"
+      },
+      {
+        "keys": "\u0011"
+      }
+    ]
+  },
+  "draft_quit": {
+    "actions": [
+      {
+        "expect": "# Seed"
+      },
+      {
+        "paste": "Draft "
+      },
+      {
+        "expect": "Draft # Seed"
+      },
+      {
+        "keys": "\u0011"
+      }
+    ]
+  },
+  "draft_restart": {
+    "actions": [
+      {
+        "expect": "Draft # Seed"
+      },
+      {
+        "expect": "pending 0"
+      },
+      {
+        "keys": "\u0011"
+      }
+    ]
+  },
+  "resize": {
+    "actions": [
+      {
+        "expect": "\\x1b[31munsafe"
+      },
+      {
+        "resize": [
+          64,
+          12
+        ]
+      },
+      {
+        "expect": "# Seed"
+      },
+      {
+        "keys": "\u001b[O"
+      },
+      {
+        "paste": "Ignored"
+      },
+      {
+        "keys": "\u001b[I"
+      },
+      {
+        "expect": "# Seed"
+      },
+      {
+        "resize": [
+          120,
+          24
+        ]
+      },
+      {
+        "expect": "\\x1b[31munsafe"
+      },
+      {
+        "keys": "\u0011"
+      }
+    ]
+  },
+  "file_conflict": {
+    "actions": [
+      {
+        "expect": "# Seed"
+      },
+      {
+        "paste": "Local "
+      },
+      {
+        "replace_file": "External\n"
+      },
+      {
+        "keys": "\u0013"
+      },
+      {
+        "expect": "file publication"
+      },
+      {
+        "keys": "\u0011"
+      }
+    ]
+  },
+  "error_exit": {
+    "exit": 2,
+    "actions": [
+      {
+        "expect": "# Seed"
+      },
+      {
+        "make_recovery_unwritable": true
+      },
+      {
+        "paste": "Unsaved "
+      },
+      {
+        "expect": "Draft checkpoint failed"
+      },
+      {
+        "signal": "SIGTERM"
+      }
+    ]
+  },
+  "intentional_failure": {
+    "actions": [
+      {
+        "expect": "# Seed"
+      },
+      {
+        "expect": "THIS_MARKER_MUST_NEVER_EXIST"
+      }
+    ]
+  },
+  "remote_clean": {
+    "actions": [
+      {
+        "expect": "# Seed"
+      },
+      {
+        "release_remote": true
+      },
+      {
+        "expect": "# Remote"
+      },
+      {
+        "expect": "pending 1"
+      },
+      {
+        "keys": "\u0011"
+      }
+    ]
+  },
+  "remote_disjoint": {
+    "actions": [
+      {
+        "expect": "# Seed"
+      },
+      {
+        "keys": "\u001b[C\u001b[C"
+      },
+      {
+        "paste": "Local "
+      },
+      {
+        "expect": "# Local Seed"
+      },
+      {
+        "release_remote": true
+      },
+      {
+        "expect": "disjoint draft prepared"
+      },
+      {
+        "expect": "# Local Seed"
+      },
+      {
+        "keys": "\u0013"
+      },
+      {
+        "expect": "Save: committed locally"
+      },
+      {
+        "expect": "Remote tail"
+      },
+      {
+        "expect": "pending 2"
+      },
+      {
+        "keys": "\u0011"
+      }
+    ]
+  },
+  "remote_restart": {
+    "actions": [
+      {
+        "expect": "# Local Seed"
+      },
+      {
+        "expect": "Remote tail"
+      },
+      {
+        "expect": "pending 2"
+      },
+      {
+        "keys": "\u0011"
+      }
+    ]
+  },
+  "remote_conflict": {
+    "actions": [
+      {
+        "expect": "# Seed"
+      },
+      {
+        "keys": "\u001b[C\u001b[C\u001b[1;2F"
+      },
+      {
+        "paste": "Local"
+      },
+      {
+        "expect": "# Local"
+      },
+      {
+        "release_remote": true
+      },
+      {
+        "expect": "CONFLICT"
+      },
+      {
+        "keys": "\u001b"
+      },
+      {
+        "expect": "resolution cancelled"
+      },
+      {
+        "keys": "\u0005"
+      },
+      {
+        "expect": "private base/local/current/resolution recovery export"
+      },
+      {
+        "keys": "\u0011"
+      }
+    ]
+  },
+  "remote_conflict_restart": {
+    "actions": [
+      {
+        "expect": "# Local"
+      },
+      {
+        "keys": "\u0014"
+      },
+      {
+        "expect": "CONFLICT"
+      },
+      {
+        "keys": "\u0014\u0007\u0001"
+      },
+      {
+        "paste": "# Resolved\n\nTail\n"
+      },
+      {
+        "keys": "\u0010"
+      },
+      {
+        "expect": "resolution prepared"
+      },
+      {
+        "keys": "\u001b[13;5u"
+      },
+      {
+        "expect": "resolution committed through shared preparation"
+      },
+      {
+        "keys": "\u0011"
+      }
+    ]
+  },
+  "remote_rejection": {
+    "actions": [
+      {
+        "expect": "# Seed"
+      },
+      {
+        "release_remote": true
+      },
+      {
+        "expect": "host delivery unavailable"
+      },
+      {
+        "expect": "pending 0"
+      },
+      {
+        "keys": "\u0011"
+      }
+    ]
+  }
 }

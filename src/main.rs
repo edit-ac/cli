@@ -155,16 +155,18 @@ fn main() -> ExitCode {
             editac_cli::EDITOR_REVISION
         ),
         [command, ..] if command == "tui" => {
-            let result =
-                editac_cli::tui::session::Request::parse(&args).and_then(|request| request.open());
+            let result = editac_cli::tui::session::Request::parse(&args)
+                .and_then(|request| request.open().map(|session| (session, request.adapter)));
             match result {
-                Ok(mut session) => {
+                Ok((mut session, adapter)) => {
                     let now = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map_or(u64::MAX, |d| d.as_secs());
                     use std::io::IsTerminal;
                     if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
-                        if let Err(error) = editac_cli::tui::terminal::run(&mut session, now) {
+                        if let Err(error) =
+                            editac_cli::tui::terminal::run_with_adapter(&mut session, now, adapter)
+                        {
                             eprintln!(
                                 "terminal lifecycle failed; retain session store and draft recovery: {}",
                                 editac_cli::tui::view::escape_line(&error.to_string(), 4096)

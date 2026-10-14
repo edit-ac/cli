@@ -391,17 +391,63 @@ pub fn run<S: editac_session::session::SessionStore>(
     session: &mut super::session::TerminalSession<S>,
     now: u64,
 ) -> io::Result<()> {
+    run_with_adapter(session, now, None)
+}
+pub fn run_with_adapter<S: editac_session::session::SessionStore>(
+    session: &mut super::session::TerminalSession<S>,
+    now: u64,
+    adapter: Option<std::path::PathBuf>,
+) -> io::Result<()> {
     let clock = || {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(u64::MAX, |d| d.as_secs())
     };
-    run_session(
+    let adapter = adapter
+        .map(crate::host_adapter::HostAdapter::new)
+        .transpose()
+        .map_err(io::Error::other)?;
+    let mut acknowledged = vec![];
+    let result = run_session_with_delivery(
         session,
         now,
         &mut TerminalOwner::new(CrosstermIo::default()),
         clock,
-    )
+        |session, collaboration| {
+            let Some(adapter) = &adapter else {
+                return Ok(());
+            };
+            if collaboration.pending().0 != 0 {
+                return Ok(());
+            }
+            let entries = adapter
+                .terminal_updates(
+                    session.service.session().document().identity(),
+                    &acknowledged,
+                )
+                .map_err(|_| {
+                    io::Error::other(
+                        "host delivery unavailable; retained drafts and pending journal",
+                    )
+                })?;
+            acknowledged.clear();
+            for entry in entries {
+                let id = entry.id().clone();
+                collaboration
+                    .enqueue(session, entry)
+                    .map_err(|_| io::Error::other("host envelope rejected; retained draft"))?;
+                acknowledged.push(id);
+            }
+            Ok(())
+        },
+    );
+    if let Some(adapter) = &adapter {
+        let detached = adapter
+            .terminal_detach(session.service.session().document().identity())
+            .map_err(|_| io::Error::other("host detach unavailable; local state retained"));
+        return result.and(detached);
+    }
+    result
 }
 /// Canonical command/collaboration/lifecycle orchestration used by the binary and tests.
 pub fn run_session<S: editac_session::session::SessionStore, T: TerminalIo>(
@@ -409,6 +455,18 @@ pub fn run_session<S: editac_session::session::SessionStore, T: TerminalIo>(
     now: u64,
     terminal: &mut TerminalOwner<T>,
     clock: impl Fn() -> u64,
+) -> io::Result<()> {
+    run_session_with_delivery(session, now, terminal, clock, |_, _| Ok(()))
+}
+fn run_session_with_delivery<S: editac_session::session::SessionStore, T: TerminalIo>(
+    session: &mut super::session::TerminalSession<S>,
+    now: u64,
+    terminal: &mut TerminalOwner<T>,
+    clock: impl Fn() -> u64,
+    mut delivery: impl FnMut(
+        &super::session::TerminalSession<S>,
+        &mut super::collaboration::Collaboration,
+    ) -> io::Result<()>,
 ) -> io::Result<()> {
     let mut recovery = session
         .recovery
@@ -438,6 +496,12 @@ pub fn run_session<S: editac_session::session::SessionStore, T: TerminalIo>(
             |view| {
                 let mut state = shared.borrow_mut();
                 let (session, commands, collaboration) = &mut *state;
+                if let Err(error) = delivery(session, collaboration) {
+                    let message = error.to_string();
+                    let changed = view.input_message.as_ref() != Some(&message);
+                    view.input_message = Some(message);
+                    return changed;
+                }
                 match collaboration.tick(session, commands.as_mut(), view, clock()) {
                     Ok(changed) => changed,
                     Err(_) => {

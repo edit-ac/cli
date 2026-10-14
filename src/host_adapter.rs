@@ -37,7 +37,14 @@ impl HostAdapter {
             ),
         })
     }
-    fn call<T: DeserializeOwned>(&self, mut request: Value) -> Result<T, TransportError> {
+    fn call<T: DeserializeOwned>(&self, request: Value) -> Result<T, TransportError> {
+        self.call_bounded(request, MAX_IPC_BYTES)
+    }
+    fn call_bounded<T: DeserializeOwned>(
+        &self,
+        mut request: Value,
+        limit: u64,
+    ) -> Result<T, TransportError> {
         request
             .as_object_mut()
             .ok_or(TransportError::InvalidProtocol)?
@@ -83,7 +90,7 @@ impl HostAdapter {
             let mut input_file = private(&input).map_err(|_| TransportError::Unavailable)?;
             let bytes =
                 serde_json::to_vec(&request).map_err(|_| TransportError::InvalidProtocol)?;
-            if bytes.len() as u64 > MAX_IPC_BYTES {
+            if bytes.len() as u64 > limit {
                 return Err(TransportError::InvalidProtocol);
             }
             input_file
@@ -104,9 +111,7 @@ impl HostAdapter {
             let start = Instant::now();
             let outcome = loop {
                 if start.elapsed() > Duration::from_secs(3)
-                    || response_file
-                        .metadata()
-                        .map_or(true, |m| m.len() > MAX_IPC_BYTES)
+                    || response_file.metadata().map_or(true, |m| m.len() > limit)
                 {
                     let _ = child.kill();
                     let _ = child.wait();
@@ -130,10 +135,10 @@ impl HostAdapter {
                 .map_err(|_| TransportError::Unavailable)?;
             let mut bytes = vec![];
             response_file
-                .take(MAX_IPC_BYTES + 1)
+                .take(limit + 1)
                 .read_to_end(&mut bytes)
                 .map_err(|_| TransportError::Unavailable)?;
-            if bytes.len() as u64 > MAX_IPC_BYTES {
+            if bytes.len() as u64 > limit {
                 return Err(TransportError::InvalidProtocol);
             }
             let response: Value =
@@ -154,6 +159,72 @@ impl HostAdapter {
             .map_err(|_| TransportError::InvalidProtocol)
         };
         run()
+    }
+    /// Private host IPC, not a wire protocol or an authentication shortcut. The
+    /// explicitly selected host supplies scoped, already-authorized envelopes;
+    /// their writers must already be reserved in the granted native store.
+    /// A batch is acknowledged only after shared durable admission drained it.
+    pub fn terminal_updates(
+        &self,
+        scope: &crate::engine::document::DocumentIdentity,
+        acknowledged: &[editac_session::ports::UpdateId],
+    ) -> Result<Vec<editac_session::ports::JournalEntry>, TransportError> {
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct Entry {
+            identity: StoredIdentity,
+            writer: u32,
+            sequence: u64,
+            checksum: [u8; 32],
+            origin: String,
+            bytes: Vec<u8>,
+        }
+        let acknowledgments = acknowledged
+            .iter()
+            .map(|id| {
+                json!({
+                    "writer":id.writer,"sequence":id.sequence,"checksum":id.checksum
+                })
+            })
+            .collect::<Vec<_>>();
+        let entries: Vec<Entry> = self.call_bounded(
+            json!({
+                "operation":"terminal-updates", "identity":StoredIdentity::from(scope),
+                "capacity":8, "acknowledged":acknowledgments
+            }),
+            1_048_576,
+        )?;
+        if entries.len() > 8 {
+            return Err(TransportError::InvalidProtocol);
+        }
+        entries
+            .into_iter()
+            .map(|entry| {
+                if entry.identity != StoredIdentity::from(scope) {
+                    return Err(TransportError::Incompatible);
+                }
+                editac_session::ports::JournalEntry::from_stored(
+                    editac_session::ports::UpdateId {
+                        identity: scope.clone(),
+                        writer: entry.writer,
+                        sequence: entry.sequence,
+                        checksum: entry.checksum,
+                    },
+                    entry.origin,
+                    entry.bytes,
+                )
+                .map_err(|_| TransportError::InvalidProtocol)
+            })
+            .collect()
+    }
+    pub fn terminal_detach(
+        &self,
+        scope: &crate::engine::document::DocumentIdentity,
+    ) -> Result<(), TransportError> {
+        self.call_bounded(
+            json!({"operation":"terminal-detach", "identity":StoredIdentity::from(scope)}),
+            65_536,
+        )
     }
 }
 impl CredentialStore for HostAdapter {

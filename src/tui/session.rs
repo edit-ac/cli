@@ -146,6 +146,7 @@ pub struct Request {
     pub options: ResolveOptions,
     pub store: Option<PathBuf>,
     pub catalog: Option<PathBuf>,
+    pub adapter: Option<PathBuf>,
 }
 impl Request {
     pub fn parse(args: &[OsString]) -> Result<Self, &'static str> {
@@ -158,6 +159,7 @@ impl Request {
             options: ResolveOptions::default(),
             store: None,
             catalog: None,
+            adapter: None,
         };
         let mut seen = std::collections::HashSet::new();
         let mut i = 2;
@@ -170,7 +172,7 @@ impl Request {
             match flag {
                 "--create" => request.options.create = true,
                 "--offline" => {}
-                "--format" | "--store" | "--catalog" => {
+                "--format" | "--store" | "--catalog" | "--adapter" => {
                     let value = args.get(i).ok_or("option value required")?;
                     i += 1;
                     match flag {
@@ -181,10 +183,18 @@ impl Request {
                             )
                         }
                         "--store" => request.store = Some(PathBuf::from(value)),
+                        "--adapter" => request.adapter = Some(PathBuf::from(value)),
                         _ => request.catalog = Some(PathBuf::from(value)),
                     }
                 }
                 _ => return Err("unexpected option"),
+            }
+        }
+        if let Some(adapter) = &request.adapter {
+            if !request.remote() || !adapter.is_absolute() || seen.contains("--offline") {
+                return Err(
+                    "terminal adapter requires a cached host target, absolute executable and online opt-in",
+                );
             }
         }
         if request.remote() {

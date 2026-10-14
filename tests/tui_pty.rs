@@ -70,6 +70,123 @@ impl Drop for SetupCleanup {
     }
 }
 impl Fixture {
+    fn remote(&mut self, block: usize, replacement: &str) {
+        use editac_cli::engine::{
+            Utf16Offset,
+            commands::{editor::EditorCommand, text::TextOrigin},
+        };
+        use editac_session::{
+            edit_service::{EditService, HostPolicy},
+            ports::{CheckpointRecord, LocalStore},
+            session::{CachedPermission, Session},
+            store::NativeStore,
+        };
+        use std::{os::unix::fs::PermissionsExt, sync::Arc};
+        let local = NativeStore::open_existing(
+            self.root.join("cache.sqlite"),
+            self.id.clone(),
+            Default::default(),
+        )
+        .unwrap();
+        let restored = Session::open(local, &self.id, CachedPermission::LOCAL).unwrap();
+        let checkpoint = restored.document().checkpoint();
+        drop(restored);
+        let peer_store = Arc::new(
+            NativeStore::create_new(
+                self.root.join("peer.sqlite"),
+                self.id.clone(),
+                Default::default(),
+            )
+            .unwrap(),
+        );
+        peer_store
+            .publish(0, CheckpointRecord::new(checkpoint, vec![]).unwrap())
+            .unwrap();
+        let mut peer = EditService::new(
+            Session::open(peer_store.clone(), &self.id, CachedPermission::LOCAL).unwrap(),
+            HostPolicy::default(),
+        );
+        let local = NativeStore::open_existing(
+            self.root.join("cache.sqlite"),
+            self.id.clone(),
+            Default::default(),
+        )
+        .unwrap();
+        local
+            .claim_writer(peer.session().document().writer_id())
+            .unwrap();
+        let read = peer.read(0).unwrap();
+        let owner = &read
+            .snapshot
+            .visible
+            .iter()
+            .filter(|n| n.kind == "block")
+            .nth(block)
+            .unwrap()
+            .id;
+        let prepared = peer
+            .prepare_commands(
+                &read.revision,
+                &[EditorCommand::ReplaceAt {
+                    owner: owner.clone(),
+                    from: Utf16Offset(0),
+                    to: Utf16Offset(4),
+                    text: replacement.into(),
+                }],
+                &TextOrigin::new("peer:mock-host").unwrap(),
+                0,
+            )
+            .unwrap();
+        let committed = peer.apply(prepared, 0).unwrap().unwrap();
+        let entry = peer_store
+            .pending(&self.id)
+            .unwrap()
+            .into_iter()
+            .find(|e| e.id() == &committed.update)
+            .unwrap();
+        fs::write(
+            self.root.join("remote-entries.json"),
+            serde_json::to_vec(&json!([{
+                "identity":StoredIdentity::from(&self.id), "writer":entry.id().writer,
+                "sequence":entry.id().sequence,"checksum":entry.id().checksum,
+                "origin":entry.origin(),"bytes":entry.bytes()
+            }]))
+            .unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            self.root.join("remote-scope.json"),
+            serde_json::to_vec(&StoredIdentity::from(&self.id)).unwrap(),
+        )
+        .unwrap();
+        let mock = self.root.join("mock-host.py");
+        fs::write(
+            &mock,
+            include_str!("fixtures/tui/mock-host.py")
+                .replace("__FIXTURE_ROOT__", &self.root.display().to_string()),
+        )
+        .unwrap();
+        fs::set_permissions(&mock, fs::Permissions::from_mode(0o700)).unwrap();
+        self.args.retain(|v| v != "--offline");
+        self.args
+            .extend(["--adapter".into(), mock.display().to_string()]);
+    }
+    fn host_cleanup(&self) {
+        assert!(self.root.join("mock-acknowledged").exists());
+        assert!(self.root.join("mock-detached").exists());
+        assert!(!fs::read_dir(&self.root).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("editac-host-adapter-")
+        }));
+        fs::copy(
+            self.root.join("mock-calls.jsonl"),
+            self.output.join("mock-calls.jsonl"),
+        )
+        .unwrap();
+    }
     fn new(name: &str, source: &str, hosted: Option<bool>) -> Self {
         let root = std::env::temp_dir().join(format!("editac-pty-{}-{name}", std::process::id()));
         assert!(!root.exists(), "fixture collision");
@@ -320,4 +437,91 @@ fn intentional_driver_failure_is_bounded_and_reaps_actual_binary() {
             .unwrap()
             .contains("missing frame marker")
     );
+}
+
+#[test]
+fn packaged_mock_host_clean_refresh_and_duplicate_delivery() {
+    let mut f = Fixture::new("remote_clean", "# Seed\n\nTail\n", Some(true));
+    f.remote(0, "Remote");
+    f.run("remote", scenario("remote_clean"), true);
+    f.host_cleanup();
+    f.verify("# Remote\n\nTail\n", 1, None);
+}
+#[test]
+fn packaged_mock_host_dirty_disjoint_save_and_offline_restart() {
+    let mut f = Fixture::new("remote_disjoint", "# Seed\n\nTail\n", Some(true));
+    f.remote(1, "Remote tail");
+    f.run("remote", scenario("remote_disjoint"), true);
+    f.host_cleanup();
+    f.args.truncate(f.args.len() - 2);
+    f.args.push("--offline".into());
+    f.run("offline-restart", scenario("remote_restart"), true);
+    f.verify("# Local Seed\n\nRemote tail\n", 2, None);
+}
+#[test]
+fn packaged_mock_host_overlap_cancel_export_and_explicit_resolution() {
+    let mut f = Fixture::new("remote_conflict", "# Seed\n\nTail\n", Some(true));
+    f.remote(0, "Remote");
+    f.run("conflict", scenario("remote_conflict"), true);
+    f.host_cleanup();
+    let recovery_root = editac_cli::tui::lifecycle::recovery_path(&f.root.join("cache.sqlite"));
+    let exported = fs::read_dir(recovery_root)
+        .unwrap()
+        .filter_map(|e| {
+            let p = e.unwrap().path();
+            if p.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("editac-tui-export-")
+            {
+                let value: Value = serde_json::from_slice(&fs::read(p).unwrap()).unwrap();
+                if value.get("conflict").is_some() {
+                    return Some(value);
+                }
+            }
+            None
+        })
+        .next()
+        .expect("complete private conflict export");
+    assert_eq!(exported["conflict"]["base"], "# Seed\n\nTail\n");
+    assert_eq!(exported["conflict"]["local"], "# Local\n\nTail\n");
+    assert_eq!(exported["conflict"]["current"], "# Remote\n\nTail\n");
+    f.args.truncate(f.args.len() - 2);
+    f.args.push("--offline".into());
+    f.run(
+        "offline-conflict-restart",
+        scenario("remote_conflict_restart"),
+        true,
+    );
+    f.verify("# Resolved\n\nTail\n", 2, None);
+}
+
+#[test]
+fn packaged_host_scope_rejection_and_explicit_optin_guards() {
+    let mut f = Fixture::new("remote_rejection", "# Seed\n\nTail\n", Some(true));
+    f.remote(0, "Remote");
+    let mut entries: Value =
+        serde_json::from_slice(&fs::read(f.root.join("remote-entries.json")).unwrap()).unwrap();
+    entries[0]["identity"]["epoch"] = json!("ac000000-0000-4000-8000-000000000999");
+    fs::write(
+        f.root.join("remote-entries.json"),
+        serde_json::to_vec(&entries).unwrap(),
+    )
+    .unwrap();
+    f.run("reject", scenario("remote_rejection"), true);
+    assert!(!f.root.join("mock-acknowledged").exists());
+    assert!(f.root.join("mock-detached").exists());
+    f.verify("# Seed\n\nTail\n", 0, None);
+    let mut offline = f.args.clone();
+    offline.push("--offline".into());
+    assert!(Request::parse(&offline.iter().map(Into::into).collect::<Vec<_>>()).is_err());
+    let local = vec![
+        "tui".into(),
+        f.root.join("source.md").into_os_string(),
+        "--store".into(),
+        f.root.join("cache.sqlite").into_os_string(),
+        "--adapter".into(),
+        f.root.join("mock-host.py").into_os_string(),
+    ];
+    assert!(Request::parse(&local).is_err());
 }
