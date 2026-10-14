@@ -261,6 +261,9 @@ pub fn export_private<S: SessionStore>(
     root: &Path,
 ) -> Result<PathBuf, ReviewError> {
     let bytes = export_bytes(session, source, now)?;
+    write_private(&bytes, root)
+}
+pub(crate) fn write_private(bytes: &[u8], root: &Path) -> Result<PathBuf, ReviewError> {
     let path = root.join(format!(
         "editac-tui-export-{}-{}.json",
         std::process::id(),
@@ -274,11 +277,7 @@ pub fn export_private<S: SessionStore>(
         options.mode(0o600);
     }
     let mut file = options.open(&path).map_err(|_| ReviewError::Export)?;
-    if file
-        .write_all(&bytes)
-        .and_then(|_| file.sync_all())
-        .is_err()
-    {
+    if file.write_all(bytes).and_then(|_| file.sync_all()).is_err() {
         let _ = std::fs::remove_file(&path);
         return Err(ReviewError::Export);
     }

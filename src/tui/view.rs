@@ -18,6 +18,7 @@ pub struct View {
     pub input_message: Option<String>,
     pub draft_changed: bool,
     pub review: Option<super::diff::Review>,
+    pub conflict: Option<super::conflict::ConflictView>,
 }
 impl View {
     pub fn from_session<S: SessionStore>(session: &TerminalSession<S>, now: u64) -> Self {
@@ -49,6 +50,7 @@ impl View {
             input_message: None,
             draft_changed: false,
             review: None,
+            conflict: None,
         }
     }
 }
@@ -83,7 +85,13 @@ pub fn render(frame: &mut Frame<'_>, view: &View) {
     let source_height = area.height.saturating_sub(2);
     let width = usize::from(area.width);
     if source_height > 0 {
-        if let Some(review) = &view.review {
+        if let Some(conflict) = view.conflict.as_ref().filter(|c| c.open) {
+            conflict.render(
+                frame,
+                Rect::new(area.x, area.y, area.width, source_height),
+                view.focused,
+            );
+        } else if let Some(review) = &view.review {
             let mut rows = vec![
                 review.label.as_str(),
                 review.base_label.as_str(),
@@ -191,10 +199,12 @@ pub fn render(frame: &mut Frame<'_>, view: &View) {
     }
     if area.height > 1 {
         frame.render_widget(
-            Paragraph::new(if view.review.is_some() {
+            Paragraph::new(if view.conflict.as_ref().is_some_and(|c| c.open) {
+                "Tab panes | Ctrl L/G choose local/current P prepare Enter apply E export | Esc cancel"
+            } else if view.review.is_some() {
                 "Up/Down/Pg: review | Ctrl-Enter: apply | Ctrl-E: export | Esc: return"
             } else {
-                "Ctrl: S save Z/Y history R recover D diff E export | Esc quit"
+                "Ctrl: S save Z/Y undo R recover D diff T conflict E export | Esc"
             }),
             Rect::new(area.x, area.y + area.height - 1, area.width, 1),
         );

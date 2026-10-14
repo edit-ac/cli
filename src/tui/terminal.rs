@@ -165,7 +165,9 @@ impl<T: TerminalIo> TerminalOwner<T> {
                 Event::Key(key)
                     if view.focused
                         && key.kind == KeyEventKind::Press
-                        && ((key.code == KeyCode::Esc && view.review.is_none())
+                        && ((key.code == KeyCode::Esc
+                            && view.review.is_none()
+                            && !view.conflict.as_ref().is_some_and(|c| c.open))
                             || (matches!(key.code, KeyCode::Char('q' | 'c'))
                                 && key.modifiers == KeyModifiers::CONTROL)) =>
                 {
@@ -340,6 +342,9 @@ pub fn dispatch_command<S: editac_session::session::SessionStore>(
     recovery_root: &std::path::Path,
 ) -> bool {
     use super::commands::{Command, CommandError};
+    if view.conflict.is_some() {
+        return super::conflict::dispatch(event, view, session, commands, now, recovery_root);
+    }
     // The cached input flag never grants permission after revocation/lease expiry.
     let available = commands.is_some();
     if let Some(input) = &mut view.input {
@@ -448,11 +453,33 @@ pub fn dispatch_command<S: editac_session::session::SessionStore>(
         _ => return false,
     };
     let commands_available = commands.is_some();
+    let opening = commands
+        .as_ref()
+        .map(|c| (c.baseline().to_owned(), c.revision().clone()));
     let result = commands
         .map(|commands| commands.execute(session, command, &mut view.source, now, recovery_root));
     let refreshed = View::from_session(session, now);
     view.status = refreshed.status;
     view.draft_changed = view.source != session.source;
+    if let (
+        Some(Err(CommandError::Service(
+            editac_session::edit_service::ServiceError::SourceConflict { conflict, .. },
+        ))),
+        Some((base, base_revision)),
+    ) = (&result, opening)
+    {
+        if let (Ok(current), Ok(read)) = (session.project_source(), session.service.read(now)) {
+            view.conflict = super::conflict::ConflictView::capture(
+                &base,
+                &view.source,
+                &current,
+                &base_revision,
+                read.revision,
+                super::conflict::Reason::Mapping(conflict.kind),
+            )
+            .ok();
+        }
+    }
     if let Some(input) = &mut view.input {
         input.writable = commands_available && session.service.capabilities(now).can_apply;
     }

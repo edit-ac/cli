@@ -40,6 +40,7 @@ pub struct Collaboration {
     pending: VecDeque<JournalEntry>,
     bytes: usize,
     pub draft: Option<Draft>,
+    incompatible: bool,
 }
 impl Collaboration {
     pub fn capture<S: SessionStore>(
@@ -55,6 +56,7 @@ impl Collaboration {
             pending: VecDeque::new(),
             bytes: 0,
             draft: None,
+            incompatible: false,
         })
     }
     pub fn pending(&self) -> (usize, usize) {
@@ -67,6 +69,7 @@ impl Collaboration {
         entry: JournalEntry,
     ) -> Result<(), (CollaborationError, JournalEntry)> {
         if &entry.id().identity != session.service.session().document().identity() {
+            self.incompatible = true;
             return Err((CollaborationError::Incompatible, entry));
         }
         if let Some(queued) = self
@@ -101,6 +104,39 @@ impl Collaboration {
         view: &mut View,
         now: u64,
     ) -> Result<bool, CollaborationError> {
+        if self.incompatible && view.conflict.is_none() {
+            let current = session
+                .project_source()
+                .map_err(|_| CollaborationError::Projection)?;
+            let revision = session
+                .service
+                .read(now)
+                .map_err(CollaborationError::Service)?
+                .revision;
+            view.conflict = Some(
+                super::conflict::ConflictView::capture(
+                    &session.source,
+                    &view.source,
+                    &current,
+                    &self.observed,
+                    revision,
+                    super::conflict::Reason::Incompatible,
+                )
+                .map_err(|_| CollaborationError::Projection)?,
+            );
+            self.draft = Some(Draft {
+                base: session.source.clone(),
+                local: view.source.clone(),
+                current,
+                reconciled: false,
+            });
+            view.review = None;
+            view.input_message = Some(
+                "incompatible identity/epoch; rejected update retained by adapter; export recovery"
+                    .into(),
+            );
+            return Ok(true);
+        }
         let clean_anchors = if matches!(
             session.mode,
             crate::markdown::reconcile::SourceMode::Literal
@@ -154,6 +190,9 @@ impl Collaboration {
         if let Some(draft) = &mut self.draft {
             if draft.local != view.source {
                 draft.local = view.source.clone();
+                if let Some(conflict) = &mut view.conflict {
+                    conflict.local = view.source.clone();
+                }
                 draft.reconciled = commands
                     .as_deref_mut()
                     .is_some_and(|c| c.reconcile(session, &view.source, now).is_ok());
@@ -167,7 +206,7 @@ impl Collaboration {
             .observe(&self.observed, now)
             .map_err(CollaborationError::Service)?
         else {
-            if view.source == session.source {
+            if view.source == session.source && view.conflict.is_none() {
                 self.draft = None;
             }
             return Ok(status_changed);
@@ -181,6 +220,7 @@ impl Collaboration {
         {
             self.observed = read.revision;
             self.draft = None;
+            view.conflict = None;
             return Ok(status_changed);
         }
         let current = session
@@ -196,9 +236,36 @@ impl Collaboration {
                 .as_ref()
                 .map(|d| d.base.clone())
                 .unwrap_or_else(|| session.source.clone());
-            let reconciled = commands
+            let result = commands
                 .as_deref_mut()
-                .is_some_and(|c| c.reconcile(session, &view.source, now).is_ok());
+                .map(|c| c.reconcile(session, &view.source, now));
+            let reconciled = matches!(result, Some(Ok(()))) && !self.incompatible;
+            let reason = if self.incompatible {
+                super::conflict::Reason::Incompatible
+            } else {
+                match &result {
+                    Some(Err(e)) => super::conflict::Reason::from_error(e),
+                    _ => super::conflict::Reason::Unavailable,
+                }
+            };
+            if let Some(conflict) = &mut view.conflict {
+                conflict
+                    .advance(&view.source, &current, read.revision.clone(), reason)
+                    .map_err(|_| CollaborationError::Projection)?;
+            } else if !reconciled {
+                view.conflict = Some(
+                    super::conflict::ConflictView::capture(
+                        &base,
+                        &view.source,
+                        &current,
+                        &self.observed,
+                        read.revision.clone(),
+                        reason,
+                    )
+                    .map_err(|_| CollaborationError::Projection)?,
+                );
+                view.review = None;
+            }
             self.draft = Some(Draft {
                 base,
                 local: view.source.clone(),
@@ -214,6 +281,16 @@ impl Collaboration {
                 .into(),
             );
         } else {
+            if let Some(conflict) = &mut view.conflict {
+                conflict
+                    .advance(
+                        &view.source,
+                        &current,
+                        read.revision.clone(),
+                        conflict.reason,
+                    )
+                    .map_err(|_| CollaborationError::Projection)?;
+            }
             if let Some(input) = &mut view.input {
                 let retained = refresh_selection(input, &view.source, &current);
                 if let Some(selection) = &clean_anchors {
@@ -266,6 +343,7 @@ impl Collaboration {
             input.writable = writable_binding
                 && session.service.capabilities(now).can_apply
                 && view.review.is_none();
+            input.writable &= !view.conflict.as_ref().is_some_and(|c| c.open);
         }
         view.draft_changed = view.source != session.source;
         self.observed = read.revision;

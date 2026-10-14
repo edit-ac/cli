@@ -101,6 +101,27 @@ impl Commands {
     pub fn revision(&self) -> &editac_session::revision::ObservedRevision {
         self.binding.revision()
     }
+    pub fn baseline(&self) -> &str {
+        self.binding.baseline()
+    }
+    /// Explicit conflict resolution discards the old mapping only after a fresh
+    /// current-state mapping and candidate have passed shared preparation.
+    pub fn resolve<S: SessionStore>(
+        &mut self,
+        session: &mut TerminalSession<S>,
+        draft: &mut String,
+        expected: &editac_session::revision::ObservedRevision,
+        now: u64,
+        root: &Path,
+    ) -> Result<CommandResult, CommandError> {
+        if &session.service.read(now)?.revision != expected {
+            return Err(CommandError::Review(super::diff::ReviewError::Stale));
+        }
+        let binding = SourceInput::capture(session, now)?;
+        binding.prepare(session, draft, now)?;
+        self.binding = binding;
+        self.execute(session, Command::Commit, draft, now, root)
+    }
     pub fn remote_advanced(&mut self) {
         self.projected_history = true;
     }
