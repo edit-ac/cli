@@ -13,6 +13,10 @@ publish = false
 editac-core = { git = "https://github.com/edit-ac/core.git", rev = "5b3e96ec259f1cdd8df2971b2192c9cacf225a65" }
 editac-markdown = { git = "https://github.com/edit-ac/core.git", rev = "5b3e96ec259f1cdd8df2971b2192c9cacf225a65" }
 
+[dev-dependencies]
+# Deterministic opaque-checkpoint fixture construction only.
+yrs = "=0.28.0"
+
 [[bin]]
 name = "editac"
 path = "src/main.rs"

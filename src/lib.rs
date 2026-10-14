@@ -15,3 +15,6 @@ pub mod target;
 
 /// Recoverable external-editor sessions; successful changes still need preparation.
 pub mod editor;
+
+/// Exact-source preparation over the shared engine; does not publish files.
+pub mod reconcile;
