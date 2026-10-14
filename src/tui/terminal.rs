@@ -106,12 +106,24 @@ impl<T: TerminalIo> TerminalOwner<T> {
         first.map_or(Ok(()), Err)
     }
     pub fn run(&mut self, view: &mut View) -> io::Result<()> {
+        self.run_with(view, |_, _| false)
+    }
+    /// Command callback runs under the same event/terminal owner, before input.
+    pub fn run_with(
+        &mut self,
+        view: &mut View,
+        mut command: impl FnMut(&Event, &mut View) -> bool,
+    ) -> io::Result<()> {
         self.start()?;
-        let result = self.run_inner(view);
+        let result = self.run_inner(view, &mut command);
         let cleanup = self.shutdown();
         result.and(cleanup)
     }
-    fn run_inner(&mut self, view: &mut View) -> io::Result<()> {
+    fn run_inner(
+        &mut self,
+        view: &mut View,
+        command: &mut impl FnMut(&Event, &mut View) -> bool,
+    ) -> io::Result<()> {
         self.io.draw(view)?;
         loop {
             let Some(event) = self.io.read(Duration::from_millis(100))? else {
@@ -147,6 +159,7 @@ impl<T: TerminalIo> TerminalOwner<T> {
                 {
                     return Ok(());
                 }
+                event if view.focused && command(&event, view) => true,
                 event if view.focused => {
                     if let Some(input) = &mut view.input {
                         let before = view.source.clone();
@@ -243,19 +256,95 @@ impl TerminalIo for CrosstermIo {
 }
 
 pub fn run<S: editac_session::session::SessionStore>(
-    session: &super::session::TerminalSession<S>,
+    session: &mut super::session::TerminalSession<S>,
     now: u64,
 ) -> io::Result<()> {
-    // Retain the qualified source target/revision for subsequent commands. Input
-    // does not prepare or apply automatically; unsupported sources stay viewable.
-    let binding = super::input::SourceInput::capture(session, now);
+    let recovery_root = session
+        .local_baseline
+        .as_ref()
+        .and_then(|b| b.target().resolved_path().parent())
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(std::env::temp_dir);
+    let mut commands = super::commands::Commands::capture(session, now).ok();
     let mut view = View::from_session(session, now);
-    if binding.is_err() {
+    if commands.is_none() {
         if let Some(input) = &mut view.input {
             input.writable = false;
         }
         view.input_message = Some("source preparation unavailable; read only".into());
     }
-    let _binding = binding;
-    TerminalOwner::new(CrosstermIo::default()).run(&mut view)
+    TerminalOwner::new(CrosstermIo::default()).run_with(&mut view, |event, view| {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(u64::MAX, |d| d.as_secs());
+        dispatch_command(event, view, session, commands.as_mut(), now, &recovery_root)
+    })
+}
+
+/// Shared by the real terminal loop and deterministic injected-event checks.
+/// Ctrl-S saves, Ctrl-Enter commits, Ctrl-Z/Y use shared history, Ctrl-R recovers.
+pub fn dispatch_command<S: editac_session::session::SessionStore>(
+    event: &Event,
+    view: &mut View,
+    session: &mut super::session::TerminalSession<S>,
+    commands: Option<&mut super::commands::Commands>,
+    now: u64,
+    recovery_root: &std::path::Path,
+) -> bool {
+    use super::commands::{Command, CommandError};
+    let Event::Key(key) = event else {
+        return false;
+    };
+    if key.kind != KeyEventKind::Press || key.modifiers != KeyModifiers::CONTROL {
+        return false;
+    }
+    let command = match key.code {
+        KeyCode::Char('s') => Command::Save,
+        KeyCode::Enter => Command::Commit,
+        KeyCode::Char('z') => Command::Undo,
+        KeyCode::Char('y') => Command::Redo,
+        KeyCode::Char('r') => Command::Recover,
+        _ => return false,
+    };
+    let commands_available = commands.is_some();
+    let result = commands
+        .map(|commands| commands.execute(session, command, &mut view.source, now, recovery_root));
+    let refreshed = View::from_session(session, now);
+    view.status = refreshed.status;
+    view.draft_changed = view.source != session.source;
+    if let Some(input) = &mut view.input {
+        input.writable = commands_available && session.service.capabilities(now).can_apply;
+    }
+    view.input_message = Some(match result {
+        Some(Ok(result)) => {
+            if matches!(command, Command::Undo | Command::Redo | Command::Recover) {
+                view.input = refreshed.input; // History restores source; caret returns to start.
+            }
+            format!(
+                "{command:?}: {} | file {:?}",
+                if result.changed {
+                    "committed locally"
+                } else {
+                    "no semantic change"
+                },
+                result.file
+            )
+        }
+        Some(Err(error)) => match error {
+            CommandError::Service(_) => {
+                "command rejected; retain draft; check session/recovery status".into()
+            }
+            CommandError::DirtyDraft => "commit or save the draft before history".into(),
+            CommandError::File(failure) => format!(
+                "file publication {:?}; private draft retained",
+                failure.kind
+            ),
+            CommandError::Preserve(_) => "cannot preserve private draft; source retained".into(),
+            CommandError::Refresh => {
+                "source binding refresh failed; retain source and reopen".into()
+            }
+        },
+        None => "command unavailable; read only".into(),
+    });
+    true
 }

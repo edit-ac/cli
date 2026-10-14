@@ -236,6 +236,9 @@ impl SourceInput {
             .service
             .prepare_source(&self.target, &self.expected, draft, &self.origin, now)
     }
+    pub fn revision(&self) -> &ObservedRevision {
+        &self.expected
+    }
     pub fn baseline(&self) -> &str {
         self.target.source()
     }

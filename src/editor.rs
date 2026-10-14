@@ -161,6 +161,25 @@ pub struct ChangedBuffer {
     recovery: RecoveryFiles,
 }
 impl ChangedBuffer {
+    /// Preserve a host-owned source draft for the existing file publisher.
+    /// This grants no semantic admission; callers must prepare/apply separately.
+    pub fn preserve(target: LocalTarget, source: String, root: &Path) -> Result<Self, EditorError> {
+        let recovery = workspace(root, target.format())?;
+        write_private(&recovery.baseline, target.source_bytes())
+            .and_then(|()| write_private(&recovery.buffer, source.as_bytes()))
+            .map_err(|e| {
+                EditorError::failed(
+                    "editor_workspace",
+                    format!("cannot preserve draft: {e}"),
+                    &recovery,
+                )
+            })?;
+        Ok(Self {
+            target,
+            source,
+            recovery,
+        })
+    }
     pub fn target(&self) -> &LocalTarget {
         &self.target
     }

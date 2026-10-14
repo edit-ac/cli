@@ -157,7 +157,7 @@ fn fixed_frame_has_source_status_and_help_snapshot() {
         "second line",
         "third",
         "focused | exact source | local initialized | remote unknown",
-        "Esc / Ctrl-Q: quit | arrows / Shift: select | paste: literal",
+        "Ctrl-S: save | Ctrl-Z/Y: history | Ctrl-R: recover | Esc: quit",
     ];
     let padded: Vec<_> = expected.iter().map(|s| format!("{s:<64}")).collect();
     assert_eq!(trace.frames, [Buffer::with_lines(padded)]);
@@ -307,7 +307,7 @@ fn tiny_and_extreme_resize_are_bounded() {
     restored(&owner);
     let trace = owner.backend().trace.lock().unwrap();
     assert_eq!(trace.frames[1], Buffer::with_lines(["f"]));
-    assert_eq!(trace.frames[2], Buffer::with_lines(["fo", "Es"]));
+    assert_eq!(trace.frames[2], Buffer::with_lines(["fo", "Ct"]));
 }
 #[test]
 fn every_partial_startup_mode_failure_restores_terminal() {

@@ -172,7 +172,7 @@ pub fn render(frame: &mut Frame<'_>, view: &View) {
     }
     if area.height > 1 {
         frame.render_widget(
-            Paragraph::new("Esc / Ctrl-Q: quit | arrows / Shift: select | paste: literal"),
+            Paragraph::new("Ctrl-S: save | Ctrl-Z/Y: history | Ctrl-R: recover | Esc: quit"),
             Rect::new(area.x, area.y + area.height - 1, area.width, 1),
         );
     }

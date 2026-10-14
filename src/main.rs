@@ -158,13 +158,13 @@ fn main() -> ExitCode {
             let result =
                 editac_cli::tui::session::Request::parse(&args).and_then(|request| request.open());
             match result {
-                Ok(session) => {
+                Ok(mut session) => {
                     let now = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map_or(u64::MAX, |d| d.as_secs());
                     use std::io::IsTerminal;
                     if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
-                        if editac_cli::tui::terminal::run(&session, now).is_err() {
+                        if editac_cli::tui::terminal::run(&mut session, now).is_err() {
                             eprintln!("terminal I/O failed; retain session store for recovery");
                             return ExitCode::from(2);
                         }
