@@ -114,8 +114,16 @@ impl<T: TerminalIo> TerminalOwner<T> {
         view: &mut View,
         mut command: impl FnMut(&Event, &mut View) -> bool,
     ) -> io::Result<()> {
+        self.run_with_tick(view, &mut command, |_| false)
+    }
+    pub fn run_with_tick(
+        &mut self,
+        view: &mut View,
+        mut command: impl FnMut(&Event, &mut View) -> bool,
+        mut tick: impl FnMut(&mut View) -> bool,
+    ) -> io::Result<()> {
         self.start()?;
-        let result = self.run_inner(view, &mut command);
+        let result = self.run_inner(view, &mut command, &mut tick);
         let cleanup = self.shutdown();
         result.and(cleanup)
     }
@@ -123,9 +131,13 @@ impl<T: TerminalIo> TerminalOwner<T> {
         &mut self,
         view: &mut View,
         command: &mut impl FnMut(&Event, &mut View) -> bool,
+        tick: &mut impl FnMut(&mut View) -> bool,
     ) -> io::Result<()> {
         self.io.draw(view)?;
         loop {
+            if tick(view) {
+                self.io.draw(view)?;
+            }
             let Some(event) = self.io.read(Duration::from_millis(100))? else {
                 continue;
             };
@@ -273,12 +285,48 @@ pub fn run<S: editac_session::session::SessionStore>(
         }
         view.input_message = Some("source preparation unavailable; read only".into());
     }
-    TerminalOwner::new(CrosstermIo::default()).run_with(&mut view, |event, view| {
-        let now = std::time::SystemTime::now()
+    let collaboration = super::collaboration::Collaboration::capture(session, now)
+        .map_err(|_| io::Error::other("change subscription unavailable"))?;
+    let shared = std::cell::RefCell::new((session, &mut commands, collaboration));
+    let clock = || {
+        std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map_or(u64::MAX, |d| d.as_secs());
-        dispatch_command(event, view, session, commands.as_mut(), now, &recovery_root)
-    })
+            .map_or(u64::MAX, |d| d.as_secs())
+    };
+    TerminalOwner::new(CrosstermIo::default()).run_with_tick(
+        &mut view,
+        |event, view| {
+            let mut state = shared.borrow_mut();
+            let (session, commands, _) = &mut *state;
+            dispatch_command(
+                event,
+                view,
+                session,
+                commands.as_mut(),
+                clock(),
+                &recovery_root,
+            )
+        },
+        |view| {
+            let mut state = shared.borrow_mut();
+            let (session, commands, collaboration) = &mut *state;
+            match collaboration.tick(session, commands.as_mut(), view, clock()) {
+                Ok(changed) => changed,
+                Err(_) => {
+                    let message = "remote update unavailable; retain draft and queued work";
+                    let status = View::from_session(session, clock()).status;
+                    let changed =
+                        view.input_message.as_deref() != Some(message) || view.status != status;
+                    view.status = status;
+                    if let Some(input) = &mut view.input {
+                        input.writable = false;
+                    }
+                    view.input_message = Some(message.into());
+                    changed
+                }
+            }
+        },
+    )
 }
 
 /// Shared by the real terminal loop and deterministic injected-event checks.

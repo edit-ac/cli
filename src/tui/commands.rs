@@ -56,6 +56,7 @@ pub struct Commands {
     undo: Vec<Spelling>,
     redo: Vec<Spelling>,
     pending: Option<Pending>,
+    projected_history: bool,
 }
 impl Commands {
     pub fn capture<S: SessionStore>(
@@ -67,6 +68,7 @@ impl Commands {
             undo: vec![],
             redo: vec![],
             pending: None,
+            projected_history: false,
         })
     }
     pub fn review<S: SessionStore>(
@@ -95,6 +97,28 @@ impl Commands {
             .validate(session, draft, now)
             .map_err(CommandError::Review)?;
         self.execute(session, Command::Commit, draft, now, root)
+    }
+    pub fn revision(&self) -> &editac_session::revision::ObservedRevision {
+        self.binding.revision()
+    }
+    pub fn remote_advanced(&mut self) {
+        self.projected_history = true;
+    }
+    pub fn reconcile<S: SessionStore>(
+        &mut self,
+        session: &TerminalSession<S>,
+        draft: &str,
+        now: u64,
+    ) -> Result<(), CommandError> {
+        self.binding.reconcile(session, draft, now)?;
+        Ok(())
+    }
+    pub fn refresh<S: SessionStore>(
+        &mut self,
+        session: &TerminalSession<S>,
+        now: u64,
+    ) -> Result<(), CommandError> {
+        self.rebind(session, now)
     }
     fn bound_history(&mut self) {
         while self.undo.len() > 100
@@ -128,7 +152,7 @@ impl Commands {
         now: u64,
     ) -> Result<bool, CommandError> {
         let prepared = self.binding.prepare(session, draft, now)?;
-        let spelling = Spelling {
+        let mut spelling = Spelling {
             before: session.source.clone(),
             after: draft.into(),
         };
@@ -144,6 +168,11 @@ impl Commands {
                 return Err(error.into());
             }
         };
+        if self.binding.baseline() != session.source {
+            spelling.after = session
+                .project_source()
+                .map_err(|_| CommandError::Refresh)?;
+        }
         if committed {
             self.undo.push(spelling);
             self.redo.clear();
@@ -157,7 +186,13 @@ impl Commands {
             }
         }
         self.bound_history();
-        session.source = draft.into();
+        session.source = if self.binding.baseline() != session.source {
+            session
+                .project_source()
+                .map_err(|_| CommandError::Refresh)?
+        } else {
+            draft.into()
+        };
         self.rebind(session, now)?;
         Ok(committed)
     }
@@ -191,6 +226,7 @@ impl Commands {
         let changed = match command {
             Command::Commit | Command::Save => {
                 let changed = self.commit(session, draft, now)?;
+                *draft = session.source.clone();
                 if command == Command::Save {
                     if let Some(baseline) = &session.local_baseline {
                         let target = baseline.target().clone();
@@ -313,6 +349,11 @@ impl Commands {
                         session.source = spelling.before.clone();
                         self.redo.push(spelling);
                     }
+                    if self.projected_history {
+                        session.source = session
+                            .project_source()
+                            .map_err(|_| CommandError::Refresh)?;
+                    }
                     *draft = session.source.clone();
                 }
                 self.rebind(session, now)?;
@@ -346,6 +387,11 @@ impl Commands {
                             self.redo.pop();
                             self.undo.push(s);
                         }
+                    }
+                    if self.projected_history {
+                        session.source = session
+                            .project_source()
+                            .map_err(|_| CommandError::Refresh)?;
                     }
                     if restore_draft {
                         *draft = session.source.clone();

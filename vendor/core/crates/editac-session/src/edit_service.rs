@@ -160,6 +160,28 @@ impl<S: SessionStore> EditService<S> {
     pub fn set_permission(&mut self, permission: CachedPermission) {
         self.session.set_permission(permission);
     }
+    /// Host-owned transport lifecycle forwards to this same live session.
+    pub fn attach_transport(
+        &mut self,
+        transport: Box<dyn crate::ports::Transport>,
+        expires_at: u64,
+        now: u64,
+    ) -> Result<(), SessionError> {
+        self.session.attach_transport(transport, expires_at, now)
+    }
+    pub fn detach_transport(&mut self) {
+        self.session.detach_transport();
+    }
+    pub fn flush_pending(&mut self, now: u64) -> Result<usize, SessionError> {
+        self.session.flush_pending(now)
+    }
+    pub fn accept_receipt(
+        &mut self,
+        receipt: crate::ports::DurableReceipt,
+        now: u64,
+    ) -> Result<crate::ports::ReceiptResult, SessionError> {
+        self.session.accept_receipt(receipt, now)
+    }
     pub fn recover(&mut self) -> Result<(), SessionError> {
         self.session.recover()
     }

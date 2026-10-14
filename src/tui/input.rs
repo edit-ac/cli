@@ -236,6 +236,21 @@ impl SourceInput {
             .service
             .prepare_source(&self.target, &self.expected, draft, &self.origin, now)
     }
+    /// Keep the exact opening mapping, but admit only the observed current revision.
+    /// FMT-1.12 decides whether local and remote edits are provably disjoint.
+    pub fn reconcile<S: SessionStore>(
+        &mut self,
+        session: &TerminalSession<S>,
+        draft: &str,
+        now: u64,
+    ) -> Result<(), ServiceError> {
+        let current = session.service.read(now)?.revision;
+        session
+            .service
+            .prepare_source(&self.target, &current, draft, &self.origin, now)?;
+        self.expected = current;
+        Ok(())
+    }
     pub fn revision(&self) -> &ObservedRevision {
         &self.expected
     }

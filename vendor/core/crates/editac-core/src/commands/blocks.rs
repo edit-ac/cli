@@ -251,21 +251,70 @@ pub(crate) fn expand(
             if n.block_attributes != Some(BlockAttributes::Separator) {
                 return Err(EditorError::UnsupportedTarget);
             }
-            beside(n, *side, tuple("paragraph"), text.clone())?
+            let mut steps = beside(n, *side, tuple("paragraph"), text.clone())?;
+            let owner = match &steps[0] {
+                EditorCommand::Create { id, .. } => id.clone(),
+                _ => return Err(EditorError::InvalidCommand),
+            };
+            if *side == Side::After {
+                // Two independently authored placements before the same suffix
+                // have no causal adjacency. State the preceding separator edge
+                // inside this same prepared action, independent of actor order.
+                steps.push(EditorCommand::Place {
+                    target: n.id.clone(),
+                    parent: n.parent.clone(),
+                    before: Some(owner.clone()),
+                });
+            }
+            steps.push(EditorCommand::ResultCaretAt(
+                super::editor::EditorPosition {
+                    owner,
+                    offset: Utf16Offset(text.encode_utf16().count() as u32),
+                    bias: Bias::Right,
+                },
+            ));
+            steps
         }
         BlockCommand::DeleteSeparator { owner } => {
             let n = node(owner)?;
             if n.block_attributes != Some(BlockAttributes::Separator) {
                 return Err(EditorError::UnsupportedTarget);
             }
+            let at = s.visible.iter().position(|node| node.id == n.id).unwrap();
+            let previous = s.visible[..at].iter().rev().find(|node| editable(node));
+            let next = s.visible[at + 1..].iter().find(|node| editable(node));
             let mut steps = vec![];
-            if !s.visible.iter().any(|n| editable(n)) {
+            let point = if let Some(target) = previous.or(next) {
+                super::editor::EditorPosition {
+                    owner: target.id.clone(),
+                    offset: Utf16Offset(if previous.is_some() {
+                        target
+                            .runs
+                            .iter()
+                            .map(|run| run.text.encode_utf16().count() as u32)
+                            .sum()
+                    } else {
+                        0
+                    }),
+                    bias: Bias::Right,
+                }
+            } else {
                 steps = beside(n, Side::After, tuple("paragraph"), String::new())?;
-            }
+                let owner = match &steps[0] {
+                    EditorCommand::Create { id, .. } => id.clone(),
+                    _ => return Err(EditorError::InvalidCommand),
+                };
+                super::editor::EditorPosition {
+                    owner,
+                    offset: Utf16Offset(0),
+                    bias: Bias::Right,
+                }
+            };
             steps.push(EditorCommand::Enable {
                 target: owner.clone(),
                 enabled: false,
             });
+            steps.push(EditorCommand::ResultCaretAt(point));
             steps
         }
     })

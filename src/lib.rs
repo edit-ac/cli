@@ -8,7 +8,7 @@ pub use editac_core as engine;
 pub use editac_markdown as markdown;
 
 /// Immutable upstream source consumed by both crates (bound by vendor/core/provenance.json).
-pub const EDITOR_REVISION: &str = "c592e5f639fb104c5f1dfbb767647f99e1839e2e";
+pub const EDITOR_REVISION: &str = "021c22c001f376c794370dd60beb495ab8755b56";
 
 /// Offline local source acquisition, before any editor or mutation boundary.
 pub mod target;

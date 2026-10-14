@@ -37,6 +37,29 @@ pub struct TerminalSession<S: SessionStore> {
     pub local_baseline: Option<LocalBaseline>,
 }
 
+impl<S: SessionStore> TerminalSession<S> {
+    /// Literal sources use engine text verbatim; Markdown uses the qualified exporter.
+    pub fn project_source(&self) -> Result<String, &'static str> {
+        if matches!(self.mode, SourceMode::Literal) {
+            let snapshot = self
+                .service
+                .read(0)
+                .map_err(|_| "source snapshot unavailable")?
+                .snapshot;
+            return Ok(snapshot
+                .visible
+                .iter()
+                .filter(|n| n.kind == "block")
+                .map(|n| n.runs.iter().map(|r| r.text.as_str()).collect::<String>())
+                .collect::<Vec<_>>()
+                .join("\n"));
+        }
+        crate::reconcile::HostedProjection::capture(self.service.session().document())
+            .map(|p| p.source)
+            .map_err(|_| "source projection unavailable; retain draft")
+    }
+}
+
 /// A catalog hit is insufficient: restore and validate its actual checkpoint first.
 pub fn open_cached<S: SessionStore>(
     store: S,

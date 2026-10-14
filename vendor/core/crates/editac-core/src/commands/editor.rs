@@ -38,6 +38,8 @@ pub enum EditorCommand {
         anchor: EditorPosition,
         focus: EditorPosition,
     },
+    /// Internal expanded insertion policy; capture after the new owner is staged.
+    ResultCaretAt(EditorPosition),
     /// Must be the last command. Both cuts are validated before live mutation.
     SelectionAt {
         anchor: EditorPosition,
@@ -1338,6 +1340,14 @@ impl Document {
                         )
                         .map_err(|_| EditorError::InvalidCommand)?,
                     );
+                }
+                EditorCommand::ResultCaretAt(point) => {
+                    let d = self.virtual_document(&stage)?;
+                    result_caret = Some(
+                        d.anchor(&point.owner, point.offset, point.bias)
+                            .map_err(|_| EditorError::InvalidCommand)?,
+                    );
+                    result_owner = Some(point.owner.clone());
                 }
                 EditorCommand::SelectionAt { anchor, focus } => {
                     if !pending.is_empty() {
