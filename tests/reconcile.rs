@@ -168,6 +168,54 @@ fn spelling_only_preserves_checkpoint_and_exact_crlf_source() {
 }
 
 #[test]
+fn mark_only_edit_retains_text_owners_and_is_one_undoable_operation() {
+    let f = Fixture::new("plain é😀\n\nuntouched\n", "md");
+    let (mut d, base) = f.open();
+    let ids = owners(&d);
+    let before = d.snapshot().unwrap();
+    let draft = "**plain é😀**\n\nuntouched\n";
+    let result = base
+        .prepare(&d, f.edit(draft))
+        .unwrap()
+        .commit(&mut d)
+        .unwrap();
+    assert!(result.commit.is_some());
+    assert_eq!(owners(&d), ids);
+    assert_eq!(texts(&d), ["plain é😀", "untouched"]);
+    assert_eq!(d.history_state().undo_groups, 1);
+    let after = d.snapshot().unwrap();
+    let first = after.visible.iter().find(|n| n.id == ids[0]).unwrap();
+    assert!(
+        first
+            .runs
+            .iter()
+            .all(|r| r.attributes.get("bold") == Some(&yrs::Any::Bool(true)))
+    );
+    assert_eq!(
+        before.visible.iter().find(|n| n.id == ids[1]),
+        after.visible.iter().find(|n| n.id == ids[1])
+    );
+    f.preserved(&result.buffer, draft);
+    d.undo().unwrap().unwrap();
+    assert_eq!(d.snapshot().unwrap().visible, before.visible);
+    d.redo().unwrap().unwrap();
+    assert_eq!(d.snapshot().unwrap().visible, after.visible);
+}
+
+#[test]
+fn edited_lossy_source_rejects_all_changes_and_retains_exact_draft() {
+    let f = Fixture::new("known\n\nsecond\n", "md");
+    let (d, base) = f.open();
+    let bytes = d.checkpoint().bytes;
+    let vector = d.state_vector_v1();
+    let draft = "changed\n\n![alt](https://example.com/image.png)\n";
+    let error = base.prepare(&d, f.edit(draft)).err().unwrap();
+    assert_eq!(kind(&error), ConflictKind::UnsupportedContent);
+    unchanged(&d, &bytes, &vector, 0);
+    f.preserved(&error.buffer, draft);
+}
+
+#[test]
 fn literal_text_does_not_parse_markdown_and_retains_unicode_and_line_endings() {
     let f = Fixture::new("# literal\r\n*é😀*\r\n", "txt");
     let (mut d, base) = f.open();
