@@ -14,6 +14,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--binary', required=True)
 parser.add_argument('--output', required=True)
 parser.add_argument('--revision', required=True)
+parser.add_argument('--profile', choices=['local', 'hosted'], default='local')
 args = parser.parse_args()
 root = pathlib.Path(__file__).resolve().parents[1]
 output = pathlib.Path(args.output)
@@ -52,7 +53,8 @@ for path in sorted((root / 'licenses').rglob('*')):
     if path.is_file():
         files[str(path.relative_to(root))] = path.read_bytes()
 manifest = {
-    'kind': 'local-only development artifact; no publication',
+    'kind': args.profile + '-workflow development artifact; no publication',
+    'capabilities': ['local-edit', 'hosted-edit', 'offline-cache', 'sync', 'status', 'recover', 'diagnostics'],
     'sourceRevision': args.revision,
     'buildHost': target,
     'rustc': rust,
@@ -62,7 +64,7 @@ manifest = {
     'files': {name: hashlib.sha256(data).hexdigest() for name, data in files.items()},
 }
 files['manifest.json'] = (json.dumps(manifest, indent=2) + '\n').encode()
-archive = output / 'editac-local.tar.gz'
+archive = output / ('editac-' + args.profile + '.tar.gz')
 with archive.open('wb') as stream:
     with gzip.GzipFile(fileobj=stream, mode='wb', mtime=0, filename='') as zipped:
         with tarfile.open(fileobj=zipped, mode='w') as tar:

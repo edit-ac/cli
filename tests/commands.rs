@@ -37,7 +37,7 @@ fn option_errors_do_not_launch_editor() {
     assert!(!f.recovery.exists());
 }
 #[test]
-fn hosted_commands_and_urls_are_unavailable() {
+fn hosted_commands_require_explicit_configuration() {
     for args in [
         &["sync", "https://edit.ac/document"][..],
         &["status", "https://edit.ac/document"],
@@ -47,7 +47,7 @@ fn hosted_commands_and_urls_are_unavailable() {
     }
 }
 #[test]
-fn help_advertises_local_edit_and_explicit_recovery_only() {
+fn help_advertises_local_and_configured_hosted_commands() {
     let o = run(&["--help"]);
     assert!(o.status.success());
     let s = String::from_utf8(o.stdout).unwrap();

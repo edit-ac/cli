@@ -25,7 +25,7 @@ try:
   assert (package/'licenses/yrs-0.28.0/LICENSE').exists()
  case('archive-manifest-and-apache-third-party-notices',manifest)
  def help():
-  o=run(['--help']);assert o.returncode==0;assert b'edit <path>' in o.stdout;assert b'Hosted document commands are unavailable' in o.stdout
+  o=run(['--help']);assert o.returncode==0;assert b'edit <path>' in o.stdout;assert b'edit <hosted-url>' in o.stdout;assert b'--offline' in o.stdout
  case('truthful-local-help',help)
  case('version-probe',lambda: (_ for _ in ()).throw(AssertionError()) if run(['--version']).returncode else None)
  def workflow(name,ext,base,draft,mode='changed',state='locally-saved',create=False):

@@ -26,6 +26,8 @@ jobs:
       - run: cargo +1.97.1 build --release --locked --offline
       - run: python3 scripts/package-local.py --binary target/release/editac --output target/local-package --revision "$GITHUB_SHA"
       - run: python3 scripts/probe-local.py --archive target/local-package/editac-local.tar.gz --fixture tests/fixtures/workflows/editor.sh --receipt target/local-package/probes.json
+      - run: python3 scripts/package-local.py --profile hosted --binary target/release/editac --output target/hosted-package --revision "$GITHUB_SHA"
+      - run: python3 scripts/probe-hosted.py --archive target/hosted-package/editac-hosted.tar.gz --receipt target/hosted-package/hosted-probes.json
       - name: Check supported commands
         run: |
           cargo run --locked --offline -- --help

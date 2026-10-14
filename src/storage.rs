@@ -1059,6 +1059,20 @@ impl NativeStorage {
         let _lock = self.lock()?;
         self.draft_unlocked()
     }
+    /// Remove only the caller's exact draft after its committed state is durable.
+    /// A newer cooperating writer's draft is retained. Source session copies also
+    /// remain available if directory flush fails after removal.
+    pub fn clear_draft(&self, expected: &Draft) -> Result<bool, StorageError> {
+        let _lock = self.lock()?;
+        if self.draft_unlocked()?.as_ref() != Some(expected) {
+            return Ok(false);
+        }
+        fs::remove_file(self.root.join("draft.json")).map_err(io_error)?;
+        File::open(&self.root)
+            .and_then(|f| f.sync_all())
+            .map_err(io_error)?;
+        Ok(true)
+    }
     pub fn persist_draft(&self, draft: &Draft) -> Result<(), StorageError> {
         self.persist_draft_with(draft, &NativeIo)
     }

@@ -1,8 +1,8 @@
 # edit.ac CLI
 
 A local Markdown and literal UTF-8 editor client. Editing requires an external
-editor executable, no account and no network connection. Hosted editing,
-synchronization and remote durability commands are unavailable. Native artifacts
+editor executable, no account and no network connection. Optional hosted editing
+uses an explicitly configured service adapter and private native cache. Native artifacts
 are development builds; no registry release or publication is claimed.
 
 ```sh
@@ -22,7 +22,8 @@ editor (for example `vim -f`, or an appropriate wait flag for a graphical editor
 The editor is trusted executable code. Exit 130 or SIGINT means cancellation;
 other unsuccessful exits return code 2 with recovery paths. A successful unchanged
 buffer preserves the original bytes and file identity; cancellation also leaves
-the original untouched. Exit 0 reports `unchanged`, `cancelled` or `locally-saved`.
+the original untouched. Exit 0 reports `unchanged`, `cancelled`, `locally-saved` or a hosted `conflict`.
+Inspect the JSON state; a retained conflict is not a successful save.
 Other errors return code 2; SIGTERM/process interruption has the OS signal result.
 
 `.md` selects Markdown and `.txt` selects literal text; other suffixes require
@@ -95,3 +96,88 @@ The archive contains the binary, this guide, Apache-2.0 license, third-party
 notices, immutable source provenance and per-file hashes. Packaging is local;
 Cargo publishing stays disabled. Qualification counts, failures and platform
 limits are recorded in the architecture local-client evidence receipt.
+
+
+## Configured hosted editing
+
+```sh
+editac edit https://app.example.test/ac/DOCUMENT-UUID --service-config service.json --cache-dir /private/cache --adapter /absolute/path/to/host-adapter --editor 'vim -f'
+editac edit https://app.example.test/ac/DOCUMENT-UUID --service-config service.json --cache-dir /private/cache --offline --editor 'vim -f'
+editac status https://app.example.test/ac/DOCUMENT-UUID --service-config service.json --cache-dir /private/cache
+editac sync https://app.example.test/ac/DOCUMENT-UUID --service-config service.json --cache-dir /private/cache --adapter /absolute/path/to/host-adapter --attempts 3
+```
+
+Replace the illustrative URL/UUID and adapter with your authorized host settings.
+`service.json` contains `host`, HTTPS `endpoint` and a complete `identity` envelope
+(`profile`, `schema`, `protocolVersion`, `updateEncoding`, `offsets`, `documentId`,
+`epoch`). It contains no bearer credentials. The configured host owns URL identity,
+authorization, saved-credential access and the existing service protocol. Arbitrary
+web pages are not writable targets. Configuration is bounded to 8192 bytes and
+must name the exact expected schema/epoch. The cache parent must already exist as
+a private non-symlink directory (0700). No default production endpoint, ambient
+credential search, background daemon or built-in network client is provided.
+
+The adapter is a trusted absolute executable, invoked directly with no arguments
+or inherited environment, with one local JSON request on stdin and one
+`{"ok": value}` or `{"error": code}` response on stdout. This is host IPC, not a
+new server protocol. Every request includes an attachment identifier. Operations:
+`credential(endpoint)` returns a token or null; `resolve(endpoint, documentId,
+credential)` returns the complete stored identity; `bootstrap(endpoint, identity,
+credential)` returns `{identity, initialized, writerId, bytes}` for an initialized
+CRDT checkpoint. `connect(endpoint, identity, credential)` returns `{identity,
+receiptProtocol}`; `exchange(frames)` returns baseline v1 frames; `upload(entry)`
+returns `{receipt}`; `disconnect` returns null. Error codes are
+`unavailable`, `authorization`, `revoked`, `incompatible`, `invalid-protocol`.
+The host adapter must provide its existing credential-store and service integration;
+the prepared adapter in tests is a fixture. CLI responses never print tokens or
+adapter stdout/stderr. Each adapter invocation has a three-second deadline and
+96 MiB IPC limit, with private temporary files removed and the child reaped.
+
+The first online edit authorizes and bootstraps once; later opens restore the same
+native cache with distinct live writer identities. Explicit `--offline` never
+loads credentials or invokes an adapter, and refuses an uncached target. It does
+not accept `--adapter`. Hosted Markdown is a deterministic projection of the
+replica; it need not preserve the original author's spelling. No-op/cancel leaves
+committed state untouched in offline mode, retaining private source sessions.
+Online opening/refresh may independently receive or acknowledge existing work.
+
+Online editing receives updates before opening and after the editor exits, then
+revalidates the original semantic anchors. Proven disjoint changes survive;
+overlap/deletion/unsupported semantics returns `state: conflict` with private
+base/local/current source and current initialized checkpoint in `conflict.json`.
+No stale full-document replacement is uploaded. The cache's separate `draft.json`
+and returned source-session directory retain unresolved source, including editor
+failure/cancellation. A new edit refuses an unresolved native draft. To resolve,
+copy the retained source to an ordinary local Markdown file, inspect the current
+cached projection and merge explicitly; keep the evidence and draft until resolved.
+There is no automatic conflict-resolution command. Local `recover` operates on
+local editing sessions; it does not reinterpret a hosted cache as a local session.
+
+Admitted edits persist identified journal bytes before any upload and clear only
+the matching admitted draft after the local file/directory durability barrier.
+`status` is offline and distinguishes `locallySaved`, `pendingUpload`,
+`remoteCommittedUpdates`, `remoteDurability`, `unresolvedDraft`, `conflict` and
+`connection`. `locally-saved` does not mean remotely saved. Only exact negotiated
+durable application receipts permit `remotely-committed`; socket delivery, state
+vectors and missing/wrong receipts leave remote durability `unknown`. Disconnect,
+revocation and incompatible schema/epoch retain local commits and retransmittable
+bytes. Reopen offline to retain/export local work; explicit `sync` retries it.
+The native transport bounds each batch to 32 frames/16 MiB and 32 uploads, with
+1–5 attempts and capped backoff; large pending sets may require another explicit
+sync. No hardware power-loss, network-filesystem or universal OS guarantee is made.
+
+Hosted qualification uses the real external-editor/cache/reconciliation/transport
+command path with prepared local service/auth/receipt executables, including
+concurrency, reconnect, revocation and wrong/missing receipts. It never uses live
+credentials or production documents. The supported tested envelope is macOS
+arm64/APFS; Linux CI is configured but is not local execution evidence. Windows
+is unsupported. Counts, failures and package hashes live in
+`architecture/evidence/cli/hosted-client/receipt.json` in the architecture repository.
+Local-only guarantees are separately replayed against the same native package.
+No hosted backend deployment or registry publication is implied.
+
+```sh
+cargo +1.97.1 test --test hosted_workflows --test commands --locked --offline
+python3 scripts/package-local.py --profile hosted --binary target/release/editac --output target/hosted-package --revision "$(git rev-parse HEAD)"
+python3 scripts/probe-hosted.py --archive target/hosted-package/editac-hosted.tar.gz --receipt target/hosted-package/hosted-probes.json
+```

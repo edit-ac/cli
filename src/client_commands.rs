@@ -42,14 +42,13 @@ fn configuration(path: &Path) -> Result<ServiceConfig, String> {
     .ok_or("unsupported schema/epoch identity")?;
     ServiceConfig::new(c.host, c.endpoint, identity).map_err(|e| e.to_string())
 }
-/// Status never loads credentials; sync only operates on a restored cache. First
-/// authorized bootstrap remains the existing hosted acquisition host API.
+/// Status never loads credentials; hosted edit bootstraps only through an explicit adapter.
 pub fn execute(args: &[OsString]) -> Result<String, String> {
     let operation = args
         .first()
         .and_then(|s| s.to_str())
         .ok_or("command required")?;
-    if !matches!(operation, "sync" | "status") {
+    if !matches!(operation, "sync" | "status" | "edit") {
         return Err("unsupported client command".into());
     }
     let target = args.get(1).ok_or("target required")?;
@@ -57,18 +56,27 @@ pub fn execute(args: &[OsString]) -> Result<String, String> {
     let mut cache = None;
     let mut adapter = None;
     let mut attempts = None;
+    let mut editor = None;
+    let mut offline = false;
     let mut index = 2;
     while index < args.len() {
         let flag = args[index].to_str().ok_or("invalid option")?;
         index += 1;
+        if flag == "--offline" && operation == "edit" && !offline {
+            offline = true;
+            continue;
+        }
         let value = args.get(index).ok_or("option value required")?;
         match flag {
             "--service-config" if config.is_none() => config = Some(PathBuf::from(value)),
             "--cache-dir" if cache.is_none() => cache = Some(PathBuf::from(value)),
-            "--adapter" if operation == "sync" && adapter.is_none() => {
+            "--editor" if operation == "edit" && editor.is_none() => {
+                editor = Some(value.to_str().ok_or("invalid editor")?)
+            }
+            "--adapter" if operation != "status" && adapter.is_none() => {
                 adapter = Some(PathBuf::from(value))
             }
-            "--attempts" if operation == "sync" && attempts.is_none() => {
+            "--attempts" if operation != "status" && attempts.is_none() => {
                 attempts = Some(
                     value
                         .to_str()
@@ -81,6 +89,9 @@ pub fn execute(args: &[OsString]) -> Result<String, String> {
         }
         index += 1;
     }
+    if attempts.is_some_and(|n| !(1..=5).contains(&n)) {
+        return Err("attempts must be between 1 and 5".into());
+    }
     let url = target.to_str().ok_or("invalid target")?;
     if !url.starts_with("https://") {
         if operation != "status" || config.is_some() || cache.is_some() {
@@ -92,7 +103,38 @@ pub fn execute(args: &[OsString]) -> Result<String, String> {
     }
     let config = configuration(&config.ok_or("explicit service configuration required")?)?;
     config.resolve_target(url).map_err(|e| e.to_string())?;
-    let path = config.cache_path(&cache.ok_or("explicit private cache parent required")?);
+    let cache = cache.ok_or("explicit private cache parent required")?;
+    if operation == "edit" {
+        if offline && adapter.is_some() {
+            return Err("offline editing does not accept an adapter".into());
+        }
+        let executable = if offline {
+            PathBuf::from("/offline-adapter-never-invoked")
+        } else {
+            adapter.ok_or("explicit host adapter executable required")?
+        };
+        let mut credentials = HostAdapter::new(executable.clone()).map_err(String::from)?;
+        let mut service = HostAdapter::new(executable.clone()).map_err(String::from)?;
+        let mut transport = HostAdapter::new(executable).map_err(String::from)?;
+        let result = crate::hosted_edit::edit(
+            url,
+            &config,
+            &cache,
+            crate::hosted_edit::Options {
+                offline,
+                editor,
+                retry: RetryPolicy {
+                    attempts: attempts.unwrap_or(3),
+                    ..Default::default()
+                },
+            },
+            &mut credentials,
+            &mut service,
+            &mut transport,
+        )?;
+        return Ok(result.to_string());
+    }
+    let path = config.cache_path(&cache);
     if !path.try_exists().map_err(|_| "cache unavailable")? {
         return Err(
             "no cached hosted document; authorize bootstrap through configured host first".into(),

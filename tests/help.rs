@@ -27,7 +27,8 @@ fn help_lists_only_implemented_options() {
     ] {
         assert!(help.contains(command), "{command}");
     }
-    assert!(help.contains("Hosted editor commands are unavailable"));
+    assert!(help.contains("edit <hosted-url>"));
+    assert!(help.contains("--offline"));
     for command in ["editac sync", "editac status"] {
         assert!(help.contains(command));
     }

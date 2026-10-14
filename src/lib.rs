@@ -43,3 +43,6 @@ pub mod sync;
 
 pub mod client_commands;
 pub mod host_adapter;
+
+/// Hosted external-editor workflow over the existing native boundaries.
+pub mod hosted_edit;

@@ -183,3 +183,62 @@ impl Transport for HostAdapter {
         let _: Result<(), _> = self.call(json!({"operation":"disconnect"}));
     }
 }
+
+impl crate::hosted::ServiceAdapter for HostAdapter {
+    fn resolve(
+        &mut self,
+        endpoint: &str,
+        document_id: &str,
+        credential: &Credential,
+    ) -> Result<crate::engine::document::DocumentIdentity, crate::hosted::ServiceError> {
+        let stored: StoredIdentity = self
+            .call(json!({"operation":"resolve", "endpoint":endpoint,
+            "documentId":document_id, "credential":credential.expose_to_adapter()}))
+            .map_err(service_error)?;
+        identity(stored)
+    }
+    fn bootstrap(
+        &mut self,
+        endpoint: &str,
+        identity: &crate::engine::document::DocumentIdentity,
+        credential: &Credential,
+    ) -> Result<crate::engine::document::InitializedCheckpoint, crate::hosted::ServiceError> {
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct Checkpoint {
+            identity: StoredIdentity,
+            initialized: bool,
+            writer_id: u32,
+            bytes: Vec<u8>,
+        }
+        let c: Checkpoint = self.call(json!({"operation":"bootstrap", "endpoint":endpoint,
+            "identity":StoredIdentity::from(identity), "credential":credential.expose_to_adapter()})).map_err(service_error)?;
+        Ok(crate::engine::document::InitializedCheckpoint {
+            identity: self::identity(c.identity)?,
+            initialized: c.initialized,
+            writer_id: c.writer_id,
+            bytes: c.bytes,
+        })
+    }
+}
+fn service_error(error: TransportError) -> crate::hosted::ServiceError {
+    match error {
+        TransportError::Authorization | TransportError::Revoked => {
+            crate::hosted::ServiceError::Authorization
+        }
+        _ => crate::hosted::ServiceError::Unavailable,
+    }
+}
+
+fn identity(
+    stored: StoredIdentity,
+) -> Result<crate::engine::document::DocumentIdentity, crate::hosted::ServiceError> {
+    [
+        crate::engine::document::DocumentIdentity::v4,
+        crate::engine::document::DocumentIdentity::v5,
+    ]
+    .into_iter()
+    .filter_map(|make| make(stored.document_id.clone(), stored.epoch.clone()).ok())
+    .find(|i| StoredIdentity::from(i) == stored)
+    .ok_or(crate::hosted::ServiceError::Unavailable)
+}

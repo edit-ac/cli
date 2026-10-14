@@ -6,6 +6,8 @@ const HELP: &str = "editac — local-first editor client
 Usage: editac [--help | --version]
        editac edit <path> [--create] [--format <markdown|text>]
          [--editor <configuration>] [--recovery-dir <private-directory>]
+       editac edit <hosted-url> --service-config <json> --cache-dir <private-parent>
+         [--offline | --adapter <absolute-host-executable>] [--editor <configuration>]
        editac status <path>
        editac status <hosted-url> --service-config <json> --cache-dir <private-parent>
        editac sync <hosted-url> --service-config <json> --cache-dir <private-parent>
@@ -24,8 +26,8 @@ Diagnostics are secondary interchange operations. Update inputs are identified
 JSON envelopes; incremental updates require an initialized identified --base.
 Inspection emits safe counts/codes. Remote durability is not assessed.
 Conversion requires explicit loss/overwrite consent and preserves the source.
-Hosted sync/status require an existing cache and explicit host adapter configuration.
-Hosted editor commands are unavailable; acquisition/editing remain host APIs.";
+Hosted online editing requires an explicit configured host adapter.
+Offline hosted editing and status use an existing private cache without credentials.";
 
 fn data_command(args: &[OsString]) -> Result<(), String> {
     let operation = args[0].to_str().ok_or("invalid-command")?;
@@ -159,6 +161,17 @@ fn main() -> ExitCode {
                 }
             }
         }
+        [command, target, ..]
+            if command == "edit" && target.to_str().is_some_and(|s| s.starts_with("https://")) =>
+        {
+            match editac_cli::client_commands::execute(&args) {
+                Ok(report) => println!("{report}"),
+                Err(error) => {
+                    eprintln!("{error}. Run editac --help.");
+                    return ExitCode::from(2);
+                }
+            }
+        }
         [command, ..] if matches!(command.to_str(), Some("edit" | "recover")) => {
             if let Err(error) = local_command(&args) {
                 eprintln!("{error}. Run editac --help.");
@@ -172,7 +185,7 @@ fn main() -> ExitCode {
             }
         }
         _ => {
-            eprintln!("Unsupported argument. Run editac --help; hosted commands are unavailable.");
+            eprintln!("Unsupported argument. Run editac --help.");
             return ExitCode::from(2);
         }
     }
