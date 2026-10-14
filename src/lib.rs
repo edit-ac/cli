@@ -8,7 +8,7 @@ pub use editac_core as engine;
 pub use editac_markdown as markdown;
 
 /// Immutable upstream source consumed by both crates (bound by vendor/core/provenance.json).
-pub const EDITOR_REVISION: &str = "1a57fa527b28862865ca64c1fec170103d456af0";
+pub const EDITOR_REVISION: &str = "c592e5f639fb104c5f1dfbb767647f99e1839e2e";
 
 /// Offline local source acquisition, before any editor or mutation boundary.
 pub mod target;
@@ -46,3 +46,6 @@ pub mod host_adapter;
 
 /// Hosted external-editor workflow over the existing native boundaries.
 pub mod hosted_edit;
+
+/// Terminal presenter acquisition over the qualified shared session owner.
+pub mod tui;

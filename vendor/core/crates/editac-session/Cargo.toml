@@ -1,0 +1,36 @@
+[package]
+name = "editac-session"
+description = "Portable local-first session companion for edit.ac"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+native-store = ["dep:rusqlite", "dep:serde", "dep:serde_json"]
+
+[[test]]
+name = "native_store"
+required-features = ["native-store"]
+
+[dependencies]
+editac-diff = { path = "../editac-diff" }
+editac-core = { path = "../editac-core" }
+editac-markdown = { path = "../editac-markdown" }
+sha2 = "=0.10.9"
+rusqlite = { version = "=0.40.2", features = ["bundled"], optional = true }
+serde = { version = "=1.0.229", features = ["derive"], optional = true }
+serde_json = { version = "=1.0.152", optional = true }
+
+[[bin]]
+name = "editac-native-store-probe"
+path = "tests/support/native_store_probe.rs"
+required-features = ["native-store"]
+test = false
+bench = false

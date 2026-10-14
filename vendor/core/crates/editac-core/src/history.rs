@@ -59,10 +59,13 @@ pub struct HistoryState {
 }
 pub struct HistoryCommit {
     pub revision: u64,
+    pub selection: Option<crate::anchors::Selection>,
     pub update: Option<ReplayUpdate>,
 }
 
 struct Group {
+    entry_selection: Option<crate::anchors::Selection>,
+    result_selection: Option<crate::anchors::Selection>,
     manager: UndoManager,
     sources: BTreeSet<String>,
     created: BTreeSet<String>,
@@ -150,6 +153,64 @@ fn manager(
     scope(&mut m, doc, ids);
     m
 }
+// Yrs 0.28 follows an item's redone ID but drops the offset inside that
+// item. Preserve the CRDT clock displacement, never a captured source offset.
+fn restored_displacement(
+    bytes: &[u8],
+    anchor: &crate::anchors::Anchor,
+    deleted: &yrs::IdSet,
+) -> u32 {
+    use yrs::encoding::read::Read;
+    use yrs::updates::decoder::{Decoder, DecoderV1};
+    let Some(id) = anchor.portable_parts().2.id() else {
+        return 0;
+    };
+    if !deleted.contains(id) {
+        return 0;
+    }
+    let scan = || -> Result<u32, yrs::encoding::read::Error> {
+        let mut d = DecoderV1::from(bytes);
+        let clients: u32 = d.read_var()?;
+        for _ in 0..clients {
+            let count: u32 = d.read_var()?;
+            let client = d.read_client()?;
+            let mut clock: u32 = d.read_var()?;
+            for _ in 0..count {
+                let info = d.read_info()?;
+                let len = if info == 10 {
+                    d.read_var()?
+                } else if info == 0 {
+                    d.read_len()?
+                } else {
+                    if info & 128 != 0 {
+                        d.read_left_id()?;
+                    }
+                    if info & 64 != 0 {
+                        d.read_right_id()?;
+                    }
+                    if info & 192 == 0 {
+                        if d.read_parent_info()? {
+                            d.read_string()?;
+                        } else {
+                            d.read_left_id()?;
+                        }
+                        if info & 32 != 0 {
+                            d.read_string()?;
+                        }
+                    }
+                    yrs::block::ItemContent::decode(&mut d, info)?.len(yrs::OffsetKind::Utf16)
+                };
+                if client == id.client && clock <= id.clock && id.clock < clock + len {
+                    return Ok(id.clock - clock);
+                }
+                clock += len;
+            }
+        }
+        Ok(0)
+    };
+    scan().expect("trusted native checkpoint")
+}
+
 fn copy_stack(doc: &Doc, stack: &[StackItem<()>]) -> Vec<StackItem<()>> {
     stack
         .iter()
@@ -223,6 +284,8 @@ impl History {
         if !merge {
             let ids = sources(doc);
             self.undo.push_back(Group {
+                entry_selection: None,
+                result_selection: None,
                 manager: manager(doc, &ids, vec![], vec![]),
                 sources: ids,
                 created: BTreeSet::new(),
@@ -334,6 +397,20 @@ impl Document {
             h.finish(&self.doc, bytes);
         }
     }
+    pub(crate) fn history_bookmarks(
+        &mut self,
+        entry: Option<crate::anchors::Selection>,
+        result: Option<crate::anchors::Selection>,
+    ) {
+        if let Some(g) = self.history.as_mut().and_then(|h| h.undo.back_mut()) {
+            // A typing group keeps its first transaction-entry bookmark;
+            // subsequent commits update only the group's final selection.
+            if g.commits == 0 {
+                g.entry_selection = entry;
+            }
+            g.result_selection = result;
+        }
+    }
     pub fn undo(&mut self) -> Result<Option<HistoryCommit>, HistoryError> {
         self.history_apply(false)
     }
@@ -410,6 +487,39 @@ impl Document {
             return Err(HistoryError::ConcurrentConflict);
         }
         drop(admitted);
+        let bookmark = if redo {
+            g.result_selection.clone()
+        } else {
+            g.entry_selection.clone()
+        };
+        let stack = if redo {
+            g.manager.redo_stack()
+        } else {
+            g.manager.undo_stack()
+        };
+        let displacement = bookmark.as_ref().map(|s| {
+            let deleted = stack.last().expect("history stack").deletions();
+            let bytes = self.checkpoint().bytes;
+            (
+                restored_displacement(&bytes, &s.anchor, deleted),
+                restored_displacement(&bytes, &s.focus, deleted),
+            )
+        });
+        // Admit restored endpoints on the same disposable undo/redo replica.
+        // Validation precedes stack movement, live transactions and publication.
+        if let Some((s, (a, f))) = bookmark.clone().zip(displacement) {
+            let txn = stage.transact();
+            for (anchor, displacement) in [(s.anchor, a), (s.focus, f)] {
+                let restored = crate::anchors::restore_history_anchor(&txn, anchor, displacement)
+                    .map_err(|_| HistoryError::ConcurrentConflict)?;
+                if !matches!(
+                    crate::anchors::resolve(&txn, self.identity(), &projected, &restored),
+                    crate::anchors::Resolution::Position(_)
+                ) {
+                    return Err(HistoryError::ConcurrentConflict);
+                }
+            }
+        }
         let sv = self.doc.transact().state_vector();
         let before = self.checkpoint().bytes;
         let patch_before = self
@@ -427,6 +537,18 @@ impl Document {
             g.manager.undo_blocking();
         }
         controls(&self.doc, &g, redo);
+        let selection = bookmark.zip(displacement).map(|(mut s, (a, f))| {
+            s.anchor = crate::anchors::restore_history_anchor(&self.doc.transact(), s.anchor, a)
+                .expect("pre-admitted history endpoint");
+            s.focus = crate::anchors::restore_history_anchor(&self.doc.transact(), s.focus, f)
+                .expect("pre-admitted history endpoint");
+            s
+        });
+        if redo {
+            g.result_selection = selection.clone();
+        } else {
+            g.entry_selection = selection.clone();
+        }
         if redo {
             h.undo.push_back(g);
         } else {
@@ -438,6 +560,7 @@ impl Document {
             self.revision = revision;
         }
         let commit = HistoryCommit {
+            selection,
             revision: self.revision,
             update: changed.then(|| ReplayUpdate {
                 identity: self.identity().clone(),

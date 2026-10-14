@@ -93,7 +93,7 @@ fn vendored_shared_sources_match_the_immutable_provenance() {
         serde_json::from_str(&fs::read_to_string(root.join("provenance.json")).unwrap()).unwrap();
     assert_eq!(p["revision"], editac_cli::EDITOR_REVISION);
     let hashes = p["sourceHashes"].as_object().unwrap();
-    assert_eq!(hashes.len(), 47);
+    assert_eq!(hashes.len(), 59);
     for (path, expected) in hashes {
         if path == "Cargo.toml" {
             continue;
@@ -110,7 +110,7 @@ fn vendored_shared_sources_match_the_immutable_provenance() {
         p["vendoredManifestSha256"].as_str().unwrap()
     );
     let original = String::from_utf8(manifest).unwrap().replace(
-        "members = [\"crates/editac-core\", \"crates/editac-markdown\"]",
+        "members = [\"crates/editac-core\", \"crates/editac-markdown\", \"crates/editac-session\", \"crates/editac-diff\"]",
         "members = [\"crates/editac-core\", \"crates/editac-wasm\", \"crates/editac-markdown\", \"crates/editac-markdown-wasm\", \"crates/editac-ffi\", \"crates/editac-session\", \"crates/editac-diff\"]");
     assert_eq!(
         format!("{:x}", Sha256::digest(original)),

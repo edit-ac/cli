@@ -5,9 +5,7 @@ use crate::document::{Document, DocumentIdentity, ROOTS};
 use crate::projection::{ProjectionError, Snapshot};
 use std::ops::Range;
 use unicode_segmentation::UnicodeSegmentation;
-use yrs::{
-    Assoc, GetString, IndexedSequence, Map, Out, ReadTxn, StickyIndex, Text, XmlOut, XmlTextRef,
-};
+use yrs::{Assoc, IndexedSequence, Map, Out, ReadTxn, StickyIndex, Text, XmlOut, XmlTextRef};
 
 /// Left stays before an insertion at the cursor; right stays after it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -228,7 +226,10 @@ pub(crate) fn capture<T: ReadTxn>(
     if text_identity(&text) != span.identity {
         return Err(AnchorError::InvalidSource);
     }
-    utf16_to_byte(&text.get_string(txn), Utf16Offset(index))?;
+    utf16_to_byte(
+        &crate::projection::plain_text(&text, txn)?,
+        Utf16Offset(index),
+    )?;
     let position = if bias == Bias::Right && index == text.len(txn) {
         // Pinned Yrs sticky_index at a nonempty right endpoint returns None.
         StickyIndex::from_type(txn, &text, Assoc::After)
@@ -244,6 +245,40 @@ pub(crate) fn capture<T: ReadTxn>(
         bias,
     })
 }
+/// Refresh a history endpoint onto restored item IDs, retaining its CRDT-unit
+/// displacement within a copied item (lost by pinned Yrs follow_redone).
+pub(crate) fn restore_history_anchor<T: ReadTxn>(
+    txn: &T,
+    mut anchor: Anchor,
+    displacement: u32,
+) -> Result<Anchor, AnchorError> {
+    let text = source(txn, &anchor.source).ok_or(AnchorError::InvalidSource)?;
+    let offset = anchor
+        .position
+        .get_offset(txn)
+        .ok_or(AnchorError::Unresolvable)?;
+    if text_identity(&text) != anchor.source_identity
+        || offset.branch.id() != AsRef::<yrs::branch::Branch>::as_ref(&text).id()
+    {
+        return Err(AnchorError::InvalidSource);
+    }
+    let index = offset
+        .index
+        .checked_add(displacement)
+        .ok_or(AnchorError::Unresolvable)?;
+    utf16_to_byte(
+        &crate::projection::plain_text(&text, txn)?,
+        Utf16Offset(index),
+    )?;
+    anchor.position = if anchor.bias == Bias::Right && index == text.len(txn) {
+        StickyIndex::from_type(txn, &text, Assoc::After)
+    } else {
+        text.sticky_index(txn, index, anchor.bias.assoc())
+            .ok_or(AnchorError::Unresolvable)?
+    };
+    Ok(anchor)
+}
+
 pub(crate) fn resolve<T: ReadTxn>(
     txn: &T,
     identity: &DocumentIdentity,
@@ -266,7 +301,10 @@ pub(crate) fn resolve<T: ReadTxn>(
     if offset.branch.id() != AsRef::<yrs::branch::Branch>::as_ref(&text).id() {
         return fail(Unresolvable::ReplacedSource);
     }
-    if utf16_to_byte(&text.get_string(txn), Utf16Offset(offset.index)).is_err() {
+    let Ok(content) = crate::projection::plain_text(&text, txn) else {
+        return fail(Unresolvable::InvalidBoundary);
+    };
+    if utf16_to_byte(&content, Utf16Offset(offset.index)).is_err() {
         return fail(Unresolvable::InvalidBoundary);
     }
     if identity.has_structure() {

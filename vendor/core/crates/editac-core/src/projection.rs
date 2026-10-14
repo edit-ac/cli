@@ -570,6 +570,22 @@ fn touched(id: &str, delta: &[Delta]) -> Vec<TouchedRange> {
     }
     result
 }
+/// Scalar content of an admitted shared text. `XmlTextRef::get_string` renders
+/// formatting as XML tags, so it cannot validate public UTF-16 coordinates or
+/// measure semantic text limits.
+pub(crate) fn plain_text<T: ReadTxn>(
+    text: &XmlTextRef,
+    txn: &T,
+) -> Result<String, ProjectionError> {
+    let mut content = String::new();
+    for run in text.diff(txn, |_| ()) {
+        let Out::Any(Any::String(s)) = run.insert else {
+            return Err(ProjectionError::InvalidText);
+        };
+        content.push_str(&s);
+    }
+    Ok(content)
+}
 fn read_source<T: ReadTxn>(txn: &T, texts: &MapRef, id: &str) -> Result<Source, ProjectionError> {
     let Some(Out::YXmlText(text)) = texts.get(txn, id) else {
         return Err(ProjectionError::InvalidSchema);

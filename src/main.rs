@@ -4,6 +4,8 @@ use std::{ffi::OsString, path::PathBuf, process::ExitCode};
 const HELP: &str = "editac — local-first editor client
 
 Usage: editac [--help | --version]
+       editac tui <path> --store <new-absolute-db> [--create] [--format <markdown|text>]
+       editac tui <ac-reference|configured-app-url> --catalog <host-granted-json> [--offline]
        editac edit <path> [--create] [--format <markdown|text>]
          [--editor <configuration>] [--recovery-dir <private-directory>]
        editac edit <hosted-url> --service-config <json> --cache-dir <private-parent>
@@ -152,6 +154,27 @@ fn main() -> ExitCode {
             env!("CARGO_PKG_VERSION"),
             editac_cli::EDITOR_REVISION
         ),
+        [command, ..] if command == "tui" => {
+            let result =
+                editac_cli::tui::session::Request::parse(&args).and_then(|request| request.open());
+            match result {
+                Ok(session) => {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(u64::MAX, |d| d.as_secs());
+                    let state = session.service.session().state(now);
+                    let capabilities = session.service.capabilities(now);
+                    println!(
+                        "{}",
+                        serde_json::json!({"phase":"session-acquired", "presentation":"terminal loop pending", "sourceBytes": session.source.len(), "representation":format!("{:?}",session.representation), "identity":editac_cli::storage::StoredIdentity::from(session.service.session().document().identity()), "canPrepare":capabilities.can_prepare, "canApply":capabilities.can_apply, "canHistory":capabilities.can_history, "permission":format!("{:?}",state.permission)})
+                    );
+                }
+                Err(error) => {
+                    eprintln!("{error}. Run editac --help.");
+                    return ExitCode::from(2);
+                }
+            }
+        }
         [command, ..] if matches!(command.to_str(), Some("sync" | "status")) => {
             match editac_cli::client_commands::execute(&args) {
                 Ok(report) => println!("{report}"),

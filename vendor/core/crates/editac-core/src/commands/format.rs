@@ -25,7 +25,7 @@ use crate::document::{
 use crate::projection::TouchedRange;
 use std::collections::{BTreeMap, BTreeSet};
 use yrs::types::Attrs;
-use yrs::{Any, GetString, Map, Out, ReadTxn, StateVector, Text, XmlTextRef};
+use yrs::{Any, Map, Out, ReadTxn, StateVector, Text, XmlTextRef};
 
 pub const MAX_FORMAT_COMMANDS: usize = 128;
 pub const MAX_FORMAT_RUNS: usize = 8192;
@@ -321,7 +321,11 @@ impl Document {
                                     TextError::Unresolvable(Unresolvable::MissingSource).into()
                                 );
                             };
-                            if text.get_string(&txn).len() > MAX_TEXT_BYTES {
+                            if crate::projection::plain_text(&text, &txn)
+                                .map_err(TextError::from)?
+                                .len()
+                                > MAX_TEXT_BYTES
+                            {
                                 return Err(FormatError::ResourceLimit);
                             }
                             let mut at = 0;

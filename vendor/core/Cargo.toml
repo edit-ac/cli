@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/editac-core", "crates/editac-markdown"]
+members = ["crates/editac-core", "crates/editac-markdown", "crates/editac-session", "crates/editac-diff"]
 resolver = "3"
 
 [workspace.package]

@@ -21,6 +21,10 @@ pub enum Side {
 }
 #[derive(Clone, Debug)]
 pub enum BlockCommand {
+    /// Canonical v5 paragraph presentation; other alignments are not admitted.
+    AlignLeft {
+        owner: String,
+    },
     SetCode {
         owner: String,
         language: String,
@@ -206,6 +210,15 @@ pub(crate) fn expand(
         ])
     };
     Ok(match c {
+        BlockCommand::AlignLeft { owner } => {
+            let n = node(owner)?;
+            if n.kind != "block" || n.block_attributes != Some(BlockAttributes::Paragraph) {
+                return Err(EditorError::UnsupportedTarget);
+            }
+            // Canonical left alignment is already represented by this tuple.
+            // Do not manufacture a metadata update or a history action.
+            vec![]
+        }
         BlockCommand::SetCode { owner, language } => vec![presentation(
             owner,
             m::arr(vec![Any::from("code"), Any::from(language.as_str())]),
