@@ -4,9 +4,11 @@ const HELP: &str = "editac — local-first editor client scaffold
 
 Usage: editac [--help | --version]
 
-No document commands are implemented. Local Markdown/text editing and hosted
-document editing are planned using the shared engine and Markdown representation.
-Roadmaps: https://github.com/edit-ac/architecture";
+Options:
+  --help       Show this help
+  --version    Show the development version
+
+No document commands are implemented.";
 
 fn main() -> ExitCode {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
@@ -15,8 +17,9 @@ fn main() -> ExitCode {
         [flag] if flag == "--help" => println!("{HELP}"),
         [flag] if flag == "--version" => {
             println!(
-                "editac {} (development scaffold)",
-                env!("CARGO_PKG_VERSION")
+                "editac {} (development scaffold; engine {})",
+                env!("CARGO_PKG_VERSION"),
+                editac_cli::EDITOR_REVISION
             );
         }
         _ => {

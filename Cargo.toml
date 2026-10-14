@@ -8,6 +8,11 @@ repository = "https://github.com/edit-ac/cli"
 description = "Local-first edit.ac editor client scaffold; editing commands are not implemented"
 publish = false
 
+[dependencies]
+# Published immutable source; never resolve through a sibling worktree.
+editac-core = { git = "https://github.com/edit-ac/core.git", rev = "5b3e96ec259f1cdd8df2971b2192c9cacf225a65" }
+editac-markdown = { git = "https://github.com/edit-ac/core.git", rev = "5b3e96ec259f1cdd8df2971b2192c9cacf225a65" }
+
 [[bin]]
 name = "editac"
 path = "src/main.rs"
