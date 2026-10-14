@@ -40,6 +40,7 @@ pub enum RecordKind {
     Latest,
     Previous,
     Draft,
+    Receipt,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Boundary {
@@ -391,6 +392,37 @@ impl CheckpointRecord {
         Ok(c)
     }
 }
+/// Qualified application receipt; baseline frames/state vectors never create one.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DurableReceipt {
+    pub protocol: String,
+    pub state: String,
+    pub identity: StoredIdentity,
+    pub writer_id: u32,
+    pub sequence: u64,
+    pub checksum: String,
+    pub update_id: String,
+}
+pub const RECEIPT_PROTOCOL: &str = "editac-durable-receipt-v1";
+impl DurableReceipt {
+    pub fn matches(&self, entry: &JournalEntry) -> bool {
+        self.protocol == RECEIPT_PROTOCOL
+            && self.state == "durable"
+            && self.identity == entry.identity
+            && self.writer_id == entry.writer_id
+            && self.sequence == entry.sequence
+            && self.checksum == entry.checksum
+            && self.update_id == entry.update_id
+    }
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ReceiptRecord {
+    identity: StoredIdentity,
+    receipts: Vec<DurableReceipt>,
+}
+
 /// Retained exact source, independent of semantic admission and journal coverage.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -645,7 +677,7 @@ impl NativeStorage {
                             .filter(|e| !r.coverage.contains(&e.update_id))
                             .cloned()
                             .collect(),
-                        pending: entries,
+                        pending: self.unreceipted(&entries)?,
                         coverage: r.coverage,
                         draft: self.draft_unlocked().ok().flatten(),
                         rejected_latest: rejected,
@@ -672,6 +704,154 @@ impl NativeStorage {
             ),
         })
     }
+    fn receipts(&self, entries: &[JournalEntry]) -> Result<Vec<DurableReceipt>, StorageError> {
+        if !self
+            .root
+            .join("receipts.json")
+            .try_exists()
+            .map_err(io_error)?
+        {
+            return Ok(vec![]);
+        }
+        let record: ReceiptRecord = self.read("receipts.json")?;
+        record.identity.admit(&self.identity)?;
+        let mut unique = HashSet::new();
+        if record.receipts.len() > MAX_ENTRIES
+            || record
+                .receipts
+                .iter()
+                .any(|r| !unique.insert(&r.update_id) || !entries.iter().any(|e| r.matches(e)))
+        {
+            return Err(invalid("stored receipt identity mismatch"));
+        }
+        Ok(record.receipts)
+    }
+    fn unreceipted(&self, entries: &[JournalEntry]) -> Result<Vec<JournalEntry>, StorageError> {
+        let receipts = self.receipts(entries)?;
+        Ok(entries
+            .iter()
+            .filter(|e| !receipts.iter().any(|r| r.matches(e)))
+            .cloned()
+            .collect())
+    }
+    /// Never delete recovery bytes. Exact admitted receipts alone change outbox membership.
+    pub fn accept_receipt(&self, receipt: &DurableReceipt) -> Result<bool, StorageError> {
+        self.accept_receipt_with(receipt, &NativeIo)
+    }
+    pub fn accept_receipt_with(
+        &self,
+        receipt: &DurableReceipt,
+        hooks: &dyn IoHooks,
+    ) -> Result<bool, StorageError> {
+        let _lock = self.lock()?;
+        let entries = self.entries()?;
+        let mut receipts = self.receipts(&entries)?;
+        if !entries.iter().any(|e| receipt.matches(e)) {
+            return Ok(false);
+        }
+        if !receipts.iter().any(|r| r == receipt) {
+            receipts.push(receipt.clone());
+        }
+        self.publish(
+            "receipts.json",
+            &ReceiptRecord {
+                identity: StoredIdentity::from(&self.identity),
+                receipts,
+            },
+            RecordKind::Receipt,
+            hooks,
+        )?;
+        Ok(true)
+    }
+    /// Verify the exact current replica is durable before any transport can attach.
+    pub fn contains_state(&self, document: &Document) -> Result<bool, StorageError> {
+        let _lock = self.lock()?;
+        if document.identity() != &self.identity {
+            return Ok(false);
+        }
+        let recovered = self.recovery(self.entries()?)?;
+        same_state(
+            &recovered.document.checkpoint().bytes,
+            &document.checkpoint().bytes,
+        )
+    }
+    /// A retry after uncertain publication reuses immutable identity and bytes.
+    pub fn sequence_for_update(
+        &self,
+        document: &Document,
+        update: &ReplayUpdate,
+        origin: &str,
+    ) -> Result<u64, StorageError> {
+        let _lock = self.lock()?;
+        let entries = self.entries()?;
+        if let Some(entry) = entries.iter().find(|e| {
+            e.writer_id == document.writer_id()
+                && e.identity == StoredIdentity::from(&update.identity)
+                && e.origin == origin
+                && e.bytes == update.bytes
+        }) {
+            return Ok(entry.sequence);
+        }
+        Ok(entries
+            .iter()
+            .filter(|e| e.writer_id == document.writer_id())
+            .map(|e| e.sequence)
+            .max()
+            .unwrap_or(0)
+            + 1)
+    }
+    /// Recovery can find a publication whose prior caller never observed a
+    /// directory-sync acknowledgment. Cross the native boundary explicitly;
+    /// file existence alone is not an acknowledgment for status/attachment.
+    pub fn durability_barrier(
+        &self,
+        document: &Document,
+        hooks: &dyn IoHooks,
+    ) -> Result<bool, StorageError> {
+        let _lock = self.lock()?;
+        if document.identity() != &self.identity {
+            return Ok(false);
+        }
+        let recovery = self.recovery(self.entries()?)?;
+        if !same_state(
+            &recovery.document.checkpoint().bytes,
+            &document.checkpoint().bytes,
+        )? {
+            return Ok(false);
+        }
+        for item in fs::read_dir(&self.root).map_err(io_error)? {
+            let path = item.map_err(io_error)?.path();
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .ok_or_else(|| invalid("invalid filename"))?;
+            if name.starts_with("journal-")
+                || matches!(name, "latest.json" | "previous.json" | "receipts.json")
+            {
+                if !fs::symlink_metadata(&path).map_err(io_error)?.is_file() {
+                    return Err(invalid("unsafe durability record"));
+                }
+                File::open(path)
+                    .and_then(|f| f.sync_all())
+                    .map_err(io_error)?;
+            }
+        }
+        hooks
+            .boundary(RecordKind::Latest, Boundary::AfterFileSync)
+            .map_err(io_error)?;
+        File::open(&self.root)
+            .and_then(|f| f.sync_all())
+            .map_err(io_error)?;
+        hooks
+            .boundary(RecordKind::Latest, Boundary::AfterDirectorySync)
+            .map_err(io_error)?;
+        Ok(true)
+    }
+    pub fn committed_receipts(&self) -> Result<usize, StorageError> {
+        let _lock = self.lock()?;
+        Ok(self.receipts(&self.entries()?)?.len())
+    }
+
     pub fn recover(&self) -> Result<Recovery, StorageError> {
         let _lock = self.lock()?;
         self.recovery(self.entries()?)

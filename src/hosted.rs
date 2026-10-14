@@ -95,6 +95,12 @@ fn dns_host(host: &str) -> bool {
 }
 
 impl ServiceConfig {
+    pub fn endpoint(&self) -> &str {
+        &self.endpoint
+    }
+    pub fn identity(&self) -> &DocumentIdentity {
+        &self.identity
+    }
     pub fn new(
         host: String,
         endpoint: String,

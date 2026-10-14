@@ -36,3 +36,10 @@ pub mod auth;
 
 /// Authorized hosted bootstrap and native offline cache acquisition.
 pub mod hosted;
+
+pub mod status;
+/// Native explicit synchronization and offline durability reporting.
+pub mod sync;
+
+pub mod client_commands;
+pub mod host_adapter;

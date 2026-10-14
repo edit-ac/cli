@@ -27,9 +27,9 @@ fn help_lists_only_implemented_options() {
     ] {
         assert!(help.contains(command), "{command}");
     }
-    assert!(help.contains("Hosted document commands are unavailable."));
+    assert!(help.contains("Hosted editor commands are unavailable"));
     for command in ["editac sync", "editac status"] {
-        assert!(!help.contains(command));
+        assert!(help.contains(command));
     }
 }
 
@@ -58,15 +58,12 @@ fn version_reports_the_pinned_engine_without_claiming_release() {
 }
 
 #[test]
-fn unimplemented_commands_fail_without_touching_targets() {
+fn client_commands_require_valid_targets_and_explicit_configuration() {
     for command in ["status", "sync"] {
         let output = run(&[command, "/nonexistent/document.md"]);
         assert_eq!(output.status.code(), Some(2), "{command}");
         assert!(output.stdout.is_empty());
-        assert_eq!(
-            String::from_utf8(output.stderr).unwrap(),
-            "Unsupported argument. Run editac --help; hosted commands are unavailable.\n"
-        );
+        assert!(!output.stderr.is_empty());
     }
 }
 

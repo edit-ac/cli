@@ -53,8 +53,8 @@ fn help_advertises_local_edit_and_explicit_recovery_only() {
     let s = String::from_utf8(o.stdout).unwrap();
     assert!(s.contains("edit <path>"));
     assert!(s.contains("recover <session-directory>"));
-    assert!(!s.contains("editac sync"));
-    assert!(!s.contains("editac status"));
+    assert!(s.contains("editac sync"));
+    assert!(s.contains("editac status"));
 }
 #[test]
 fn visual_selection_works_without_account_or_network_environment() {

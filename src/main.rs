@@ -6,6 +6,10 @@ const HELP: &str = "editac — local-first editor client
 Usage: editac [--help | --version]
        editac edit <path> [--create] [--format <markdown|text>]
          [--editor <configuration>] [--recovery-dir <private-directory>]
+       editac status <path>
+       editac status <hosted-url> --service-config <json> --cache-dir <private-parent>
+       editac sync <hosted-url> --service-config <json> --cache-dir <private-parent>
+         --adapter <absolute-host-executable> [--attempts <1..5>]
        editac recover <session-directory> [--output <new-path>]
        editac validate <path> --input-format <markdown|json|update> [--base <path>]
        editac inspect <path> --input-format <markdown|json|update> [--base <path>]
@@ -20,7 +24,8 @@ Diagnostics are secondary interchange operations. Update inputs are identified
 JSON envelopes; incremental updates require an initialized identified --base.
 Inspection emits safe counts/codes. Remote durability is not assessed.
 Conversion requires explicit loss/overwrite consent and preserves the source.
-Hosted document commands are unavailable.";
+Hosted sync/status require an existing cache and explicit host adapter configuration.
+Hosted editor commands are unavailable; acquisition/editing remain host APIs.";
 
 fn data_command(args: &[OsString]) -> Result<(), String> {
     let operation = args[0].to_str().ok_or("invalid-command")?;
@@ -145,6 +150,15 @@ fn main() -> ExitCode {
             env!("CARGO_PKG_VERSION"),
             editac_cli::EDITOR_REVISION
         ),
+        [command, ..] if matches!(command.to_str(), Some("sync" | "status")) => {
+            match editac_cli::client_commands::execute(&args) {
+                Ok(report) => println!("{report}"),
+                Err(error) => {
+                    eprintln!("{error}. Run editac --help.");
+                    return ExitCode::from(2);
+                }
+            }
+        }
         [command, ..] if matches!(command.to_str(), Some("edit" | "recover")) => {
             if let Err(error) = local_command(&args) {
                 eprintln!("{error}. Run editac --help.");
