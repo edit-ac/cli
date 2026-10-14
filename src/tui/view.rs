@@ -17,6 +17,7 @@ pub struct View {
     pub input: Option<super::input::InputState>,
     pub input_message: Option<String>,
     pub draft_changed: bool,
+    pub review: Option<super::diff::Review>,
 }
 impl View {
     pub fn from_session<S: SessionStore>(session: &TerminalSession<S>, now: u64) -> Self {
@@ -47,6 +48,7 @@ impl View {
             )),
             input_message: None,
             draft_changed: false,
+            review: None,
         }
     }
 }
@@ -81,7 +83,24 @@ pub fn render(frame: &mut Frame<'_>, view: &View) {
     let source_height = area.height.saturating_sub(2);
     let width = usize::from(area.width);
     if source_height > 0 {
-        if let Some(input) = &view.input {
+        if let Some(review) = &view.review {
+            let mut rows = vec![
+                review.label.as_str(),
+                review.base_label.as_str(),
+                review.proposed_label.as_str(),
+                review.limitation.as_str(),
+            ];
+            rows.extend(review.page(usize::from(source_height.saturating_sub(4))));
+            let rows = rows
+                .into_iter()
+                .take(usize::from(source_height))
+                .map(|row| Line::raw(escape_line(row, width)))
+                .collect::<Vec<_>>();
+            frame.render_widget(
+                Paragraph::new(rows),
+                Rect::new(area.x, area.y, area.width, source_height),
+            );
+        } else if let Some(input) = &view.input {
             let map = super::positions::SourceMap::new(&view.source);
             let (row, column) = map.locate(input.caret).unwrap_or((0, 0));
             let top = row.saturating_sub(usize::from(source_height) - 1);
@@ -172,7 +191,11 @@ pub fn render(frame: &mut Frame<'_>, view: &View) {
     }
     if area.height > 1 {
         frame.render_widget(
-            Paragraph::new("Ctrl-S: save | Ctrl-Z/Y: history | Ctrl-R: recover | Esc: quit"),
+            Paragraph::new(if view.review.is_some() {
+                "Up/Down/Pg: review | Ctrl-Enter: apply | Ctrl-E: export | Esc: return"
+            } else {
+                "Ctrl: S save Z/Y history R recover D diff E export | Esc quit"
+            }),
             Rect::new(area.x, area.y + area.height - 1, area.width, 1),
         );
     }

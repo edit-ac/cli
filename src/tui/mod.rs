@@ -1,5 +1,6 @@
 //! Terminal presentation starts with qualified, offline-first session acquisition.
 pub mod commands;
+pub mod diff;
 pub mod input;
 pub mod positions;
 pub mod session;

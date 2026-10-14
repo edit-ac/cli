@@ -153,7 +153,7 @@ impl<T: TerminalIo> TerminalOwner<T> {
                 Event::Key(key)
                     if view.focused
                         && key.kind == KeyEventKind::Press
-                        && (key.code == KeyCode::Esc
+                        && ((key.code == KeyCode::Esc && view.review.is_none())
                             || (matches!(key.code, KeyCode::Char('q' | 'c'))
                                 && key.modifiers == KeyModifiers::CONTROL)) =>
                 {
@@ -292,6 +292,99 @@ pub fn dispatch_command<S: editac_session::session::SessionStore>(
     recovery_root: &std::path::Path,
 ) -> bool {
     use super::commands::{Command, CommandError};
+    // The cached input flag never grants permission after revocation/lease expiry.
+    let available = commands.is_some();
+    if let Some(input) = &mut view.input {
+        input.writable =
+            available && view.review.is_none() && session.service.capabilities(now).can_apply;
+    }
+    if matches!(event, Event::Key(k) if k.kind == KeyEventKind::Press && k.modifiers == KeyModifiers::CONTROL && k.code == KeyCode::Char('e'))
+    {
+        view.input_message = Some(
+            match super::diff::export_private(session, &view.source, now, recovery_root) {
+                Ok(path) => format!(
+                    "private source/semantic recovery export: {}",
+                    path.display()
+                ),
+                Err(error) => format!("export rejected: {error:?}; retain source"),
+            },
+        );
+        return true;
+    }
+    if matches!(event, Event::Key(k) if k.kind == KeyEventKind::Press && k.modifiers == KeyModifiers::CONTROL && k.code == KeyCode::Char('d'))
+    {
+        if view.review.is_some() {
+            view.review = None;
+        } else {
+            let review = match commands.as_ref() {
+                Some(commands) => commands.review(session, &view.source, now),
+                None => super::diff::Review::from_session(session, &view.source, now),
+            };
+            match review {
+                Ok(review) => {
+                    view.review = Some(review);
+                    view.input_message = None;
+                }
+                Err(error) => {
+                    view.input_message = Some(format!("review rejected: {error:?}; retain draft"))
+                }
+            }
+        }
+        return true;
+    }
+    if view.review.is_some() {
+        let mut apply = false;
+        if let Event::Key(key) = event {
+            if key.kind == KeyEventKind::Press {
+                if key.code == KeyCode::Esc {
+                    view.review = None;
+                } else if key.modifiers == KeyModifiers::NONE {
+                    let review = view.review.as_mut().expect("review exists");
+                    match key.code {
+                        KeyCode::Up => review.navigate(-1),
+                        KeyCode::Down => review.navigate(1),
+                        KeyCode::PageUp => review.navigate(-16),
+                        KeyCode::PageDown => review.navigate(16),
+                        KeyCode::Home => review.navigate(isize::MIN),
+                        KeyCode::End => review.navigate(isize::MAX),
+                        _ => {
+                            view.input_message =
+                                Some("review is read only; Esc returns to source".into())
+                        }
+                    }
+                } else if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Enter {
+                    apply = true;
+                } else {
+                    view.input_message = Some("review is read only; Esc returns to source".into());
+                }
+            }
+        }
+        if apply {
+            let result = commands.map(|commands| {
+                commands.apply_review(
+                    view.review.as_ref().expect("review exists"),
+                    session,
+                    &mut view.source,
+                    now,
+                    recovery_root,
+                )
+            });
+            view.input_message = Some(match result {
+                Some(Ok(_)) => {
+                    view.review = None;
+                    "review committed through shared preparation".into()
+                }
+                Some(Err(_)) => {
+                    "review rejected; stale/unsupported/readonly; retain draft and review again"
+                        .into()
+                }
+                None => "review apply unavailable; read only".into(),
+            });
+            view.status = View::from_session(session, now).status;
+            view.draft_changed = view.source != session.source;
+        }
+        return true; // Paste and all other editing/history paths remain inert in review.
+    }
     let Event::Key(key) = event else {
         return false;
     };
@@ -340,6 +433,7 @@ pub fn dispatch_command<S: editac_session::session::SessionStore>(
                 failure.kind
             ),
             CommandError::Preserve(_) => "cannot preserve private draft; source retained".into(),
+            CommandError::Review(_) => "review rejected; retain draft".into(),
             CommandError::Refresh => {
                 "source binding refresh failed; retain source and reopen".into()
             }

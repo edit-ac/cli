@@ -130,6 +130,7 @@ fn view() -> View {
         input: None,
         input_message: None,
         draft_changed: false,
+        review: None,
     }
 }
 fn key(code: KeyCode, modifiers: KeyModifiers) -> Option<Event> {
@@ -157,7 +158,7 @@ fn fixed_frame_has_source_status_and_help_snapshot() {
         "second line",
         "third",
         "focused | exact source | local initialized | remote unknown",
-        "Ctrl-S: save | Ctrl-Z/Y: history | Ctrl-R: recover | Esc: quit",
+        "Ctrl: S save Z/Y history R recover D diff E export | Esc quit",
     ];
     let padded: Vec<_> = expected.iter().map(|s| format!("{s:<64}")).collect();
     assert_eq!(trace.frames, [Buffer::with_lines(padded)]);

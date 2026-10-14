@@ -28,6 +28,7 @@ pub enum CommandError {
     Preserve(crate::editor::EditorError),
     File(files::SaveFailure),
     Refresh,
+    Review(super::diff::ReviewError),
 }
 impl From<ServiceError> for CommandError {
     fn from(e: ServiceError) -> Self {
@@ -67,6 +68,33 @@ impl Commands {
             redo: vec![],
             pending: None,
         })
+    }
+    pub fn review<S: SessionStore>(
+        &self,
+        session: &TerminalSession<S>,
+        draft: &str,
+        now: u64,
+    ) -> Result<super::diff::Review, super::diff::ReviewError> {
+        super::diff::Review::capture(
+            session,
+            self.binding.baseline(),
+            self.binding.revision(),
+            draft,
+            now,
+        )
+    }
+    pub fn apply_review<S: SessionStore>(
+        &mut self,
+        review: &super::diff::Review,
+        session: &mut TerminalSession<S>,
+        draft: &mut String,
+        now: u64,
+        root: &Path,
+    ) -> Result<CommandResult, CommandError> {
+        review
+            .validate(session, draft, now)
+            .map_err(CommandError::Review)?;
+        self.execute(session, Command::Commit, draft, now, root)
     }
     fn bound_history(&mut self) {
         while self.undo.len() > 100
