@@ -8,7 +8,13 @@ def case(name,fn):
  except Exception as e: cases.append({'name':name,'state':'failed','error':str(e)})
 try:
  package=root/'package'
- with tarfile.open(a.archive) as tar:tar.extractall(package,filter='data')
+ with tarfile.open(a.archive) as tar:
+  members=tar.getmembers()
+  for member in members:
+   path=pathlib.PurePosixPath(member.name)
+   if path.is_absolute() or '..' in path.parts or not (member.isfile() or member.isdir()):
+    raise ValueError('Unsafe package archive member: '+member.name)
+  tar.extractall(package,members=members)
  binary=package/'bin/editac';fixture=pathlib.Path(a.fixture).resolve()
  def run(args):return subprocess.run([str(binary),*map(str,args)],env={},capture_output=True)
  def ok(o):
