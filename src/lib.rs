@@ -12,3 +12,6 @@ pub const EDITOR_REVISION: &str = "5b3e96ec259f1cdd8df2971b2192c9cacf225a65";
 
 /// Offline local source acquisition, before any editor or mutation boundary.
 pub mod target;
+
+/// Recoverable external-editor sessions; successful changes still need preparation.
+pub mod editor;
