@@ -168,6 +168,9 @@ impl HostAdapter {
         &self,
         scope: &crate::engine::document::DocumentIdentity,
         acknowledged: &[editac_session::ports::UpdateId],
+        queued: &[editac_session::ports::UpdateId],
+        capacity: usize,
+        byte_capacity: usize,
     ) -> Result<Vec<editac_session::ports::JournalEntry>, TransportError> {
         #[derive(serde::Deserialize)]
         #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -187,14 +190,20 @@ impl HostAdapter {
                 })
             })
             .collect::<Vec<_>>();
+        let queued = queued
+            .iter()
+            .map(|id| json!({"writer":id.writer,"sequence":id.sequence,"checksum":id.checksum}))
+            .collect::<Vec<_>>();
         let entries: Vec<Entry> = self.call_bounded(
             json!({
                 "operation":"terminal-updates", "identity":StoredIdentity::from(scope),
-                "capacity":8, "acknowledged":acknowledgments
+                "capacity":capacity.min(8), "byteCapacity":byte_capacity, "queued":queued, "acknowledged":acknowledgments
             }),
             1_048_576,
         )?;
-        if entries.len() > 8 {
+        if entries.len() > capacity.min(8)
+            || entries.iter().map(|e| e.bytes.len()).sum::<usize>() > byte_capacity
+        {
             return Err(TransportError::InvalidProtocol);
         }
         entries

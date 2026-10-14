@@ -10,16 +10,26 @@ entries = json.loads((root / 'remote-entries.json').read_text())
 assert request['identity'] == json.loads((root / 'remote-scope.json').read_text())
 operation = request['operation']
 with (root / 'mock-calls.jsonl').open('a') as log:
-    log.write(json.dumps({'operation': operation, 'acknowledged': request.get('acknowledged', [])}) + '\n')
+    log.write(json.dumps({'operation': operation, 'acknowledged': request.get('acknowledged', []), 'queued': request.get('queued', [])}) + '\n')
 if operation == 'terminal-detach':
     (root / 'mock-detached').touch()
     print(json.dumps({'ok': None}))
 elif operation == 'terminal-updates':
-    expected = {key: entries[0][key] for key in ('writer', 'sequence', 'checksum')}
-    if expected in request['acknowledged']:
+    ack_path = root / 'mock-acks.json'
+    acknowledged = json.loads(ack_path.read_text()) if ack_path.exists() else []
+    for item in request['acknowledged']:
+        if item not in acknowledged:
+            acknowledged.append(item)
+    ack_path.write_text(json.dumps(acknowledged))
+    ids = [{key: entry[key] for key in ('writer', 'sequence', 'checksum')} for entry in entries]
+    if all(item in acknowledged for item in ids):
         (root / 'mock-acknowledged').touch()
     ready = (root / 'remote-ready').exists() and not (root / 'mock-acknowledged').exists()
-    # Exact duplicates exercise the real queue's echo suppression, not a presenter stub.
-    print(json.dumps({'ok': [entries[0], entries[0]] if ready else []}))
+    available = [entry for entry, item in zip(entries, ids) if item not in acknowledged and item not in request['queued']]
+    if (root / 'mock-reordered').exists():
+        batch = available[-1:] if ready else []
+    else:
+        batch = [entries[0], entries[0]] if ready and available else []
+    print(json.dumps({'ok': batch[:request['capacity']]}))
 else:
     raise AssertionError('unexpected host operation')

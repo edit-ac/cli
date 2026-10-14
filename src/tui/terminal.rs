@@ -413,17 +413,32 @@ pub fn run_with_adapter<S: editac_session::session::SessionStore>(
         now,
         &mut TerminalOwner::new(CrosstermIo::default()),
         clock,
-        |session, collaboration| {
+        |session, collaboration, finalizing| {
             let Some(adapter) = &adapter else {
                 return Ok(());
             };
-            if collaboration.pending().0 != 0 {
-                return Ok(());
+            collaboration.enable_host_delivery();
+            for id in collaboration.take_admitted() {
+                if !acknowledged.contains(&id) {
+                    acknowledged.push(id);
+                }
             }
+            let pending = collaboration.pending();
             let entries = adapter
                 .terminal_updates(
                     session.service.session().document().identity(),
                     &acknowledged,
+                    &collaboration.queued_ids(),
+                    if finalizing {
+                        0
+                    } else {
+                        super::collaboration::MAX_PENDING - pending.0
+                    },
+                    if finalizing {
+                        0
+                    } else {
+                        super::collaboration::MAX_PENDING_BYTES - pending.1
+                    },
                 )
                 .map_err(|_| {
                     io::Error::other(
@@ -432,11 +447,9 @@ pub fn run_with_adapter<S: editac_session::session::SessionStore>(
                 })?;
             acknowledged.clear();
             for entry in entries {
-                let id = entry.id().clone();
                 collaboration
                     .enqueue(session, entry)
                     .map_err(|_| io::Error::other("host envelope rejected; retained draft"))?;
-                acknowledged.push(id);
             }
             Ok(())
         },
@@ -456,7 +469,7 @@ pub fn run_session<S: editac_session::session::SessionStore, T: TerminalIo>(
     terminal: &mut TerminalOwner<T>,
     clock: impl Fn() -> u64,
 ) -> io::Result<()> {
-    run_session_with_delivery(session, now, terminal, clock, |_, _| Ok(()))
+    run_session_with_delivery(session, now, terminal, clock, |_, _, _| Ok(()))
 }
 fn run_session_with_delivery<S: editac_session::session::SessionStore, T: TerminalIo>(
     session: &mut super::session::TerminalSession<S>,
@@ -466,6 +479,7 @@ fn run_session_with_delivery<S: editac_session::session::SessionStore, T: Termin
     mut delivery: impl FnMut(
         &super::session::TerminalSession<S>,
         &mut super::collaboration::Collaboration,
+        bool,
     ) -> io::Result<()>,
 ) -> io::Result<()> {
     let mut recovery = session
@@ -496,14 +510,19 @@ fn run_session_with_delivery<S: editac_session::session::SessionStore, T: Termin
             |view| {
                 let mut state = shared.borrow_mut();
                 let (session, commands, collaboration) = &mut *state;
-                if let Err(error) = delivery(session, collaboration) {
-                    let message = error.to_string();
-                    let changed = view.input_message.as_ref() != Some(&message);
-                    view.input_message = Some(message);
-                    return changed;
-                }
+                let delivery_error = delivery(session, collaboration, false)
+                    .err()
+                    .map(|e| e.to_string());
                 match collaboration.tick(session, commands.as_mut(), view, clock()) {
-                    Ok(changed) => changed,
+                    Ok(changed) => {
+                        if let Some(message) = delivery_error {
+                            let message_changed = view.input_message.as_ref() != Some(&message);
+                            view.input_message = Some(message);
+                            changed || message_changed
+                        } else {
+                            changed
+                        }
+                    }
                     Err(_) => {
                         let message = "remote update unavailable; retain draft and queued work";
                         let status = View::from_session(session, clock()).status;
@@ -525,9 +544,10 @@ fn run_session_with_delivery<S: editac_session::session::SessionStore, T: Termin
             },
         );
         let mut state = shared.borrow_mut();
-        let (session, commands, _) = &mut *state;
+        let (session, commands, collaboration) = &mut *state;
+        let delivered = delivery(session, collaboration, true);
         let finished = recovery.finish(session, commands.as_ref(), &view);
-        finished.and(result)
+        finished.and(result).and(delivered)
     })();
     // Includes failures during view/observer acquisition, before terminal startup.
     session.service.detach_transport();

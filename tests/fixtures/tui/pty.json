@@ -418,5 +418,24 @@
         "keys": "\u0011"
       }
     ]
+  },
+  "remote_reordered": {
+    "actions": [
+      {
+        "expect": "# Seed"
+      },
+      {
+        "release_remote": true
+      },
+      {
+        "expect": "# RXmote"
+      },
+      {
+        "expect": "pending 2"
+      },
+      {
+        "keys": "\u0011"
+      }
+    ]
   }
 }

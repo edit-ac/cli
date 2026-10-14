@@ -41,6 +41,8 @@ pub struct Collaboration {
     bytes: usize,
     pub draft: Option<Draft>,
     incompatible: bool,
+    host_delivery: bool,
+    admitted: Vec<editac_session::ports::UpdateId>,
 }
 impl Collaboration {
     pub fn capture<S: SessionStore>(
@@ -57,10 +59,21 @@ impl Collaboration {
             bytes: 0,
             draft: None,
             incompatible: false,
+            host_delivery: false,
+            admitted: vec![],
         })
     }
     pub fn pending(&self) -> (usize, usize) {
         (self.pending.len(), self.bytes)
+    }
+    pub fn enable_host_delivery(&mut self) {
+        self.host_delivery = true;
+    }
+    pub fn take_admitted(&mut self) -> Vec<editac_session::ports::UpdateId> {
+        std::mem::take(&mut self.admitted)
+    }
+    pub fn queued_ids(&self) -> Vec<editac_session::ports::UpdateId> {
+        self.pending.iter().map(|e| e.id().clone()).collect()
     }
     /// Backpressure returns ownership to the caller; it must retain/retry the envelope.
     pub fn enqueue<S: SessionStore>(
@@ -164,6 +177,9 @@ impl Collaboration {
         let mut writable_binding = commands.is_some();
         let mut stalled = 0;
         for _ in 0..MAX_PER_TICK {
+            if self.host_delivery && self.admitted.len() == MAX_PENDING {
+                break;
+            }
             let Some(entry) = self.pending.front() else {
                 break;
             };
@@ -184,6 +200,9 @@ impl Collaboration {
             }
             stalled = 0;
             let entry = self.pending.pop_front().expect("front exists");
+            if self.host_delivery {
+                self.admitted.push(entry.id().clone());
+            }
             self.bytes -= entry.bytes().len();
         }
         // Draft text can change between ticks. Keep the retained recovery candidate current.

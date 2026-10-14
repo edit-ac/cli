@@ -70,7 +70,7 @@ impl Drop for SetupCleanup {
     }
 }
 impl Fixture {
-    fn remote(&mut self, block: usize, replacement: &str) {
+    fn remote(&mut self, block: usize, replacement: &str, reordered: bool) {
         use editac_cli::engine::{
             Utf16Offset,
             commands::{editor::EditorCommand, text::TextOrigin},
@@ -144,13 +144,51 @@ impl Fixture {
             .into_iter()
             .find(|e| e.id() == &committed.update)
             .unwrap();
+        let mut entries = vec![entry];
+        if reordered {
+            let read = peer.read(0).unwrap();
+            let prepared = peer
+                .prepare_commands(
+                    &read.revision,
+                    &[EditorCommand::ReplaceAt {
+                        owner: owner.clone(),
+                        from: Utf16Offset(1),
+                        to: Utf16Offset(2),
+                        text: "X".into(),
+                    }],
+                    &TextOrigin::new("peer:mock-host").unwrap(),
+                    0,
+                )
+                .unwrap();
+            let committed = peer.apply(prepared, 0).unwrap().unwrap();
+            entries.push(
+                peer_store
+                    .pending(&self.id)
+                    .unwrap()
+                    .into_iter()
+                    .find(|e| e.id() == &committed.update)
+                    .unwrap(),
+            );
+            fs::write(
+                self.root.join("mock-reordered"),
+                b"second update delivered before predecessor",
+            )
+            .unwrap();
+        }
         fs::write(
             self.root.join("remote-entries.json"),
-            serde_json::to_vec(&json!([{
-                "identity":StoredIdentity::from(&self.id), "writer":entry.id().writer,
-                "sequence":entry.id().sequence,"checksum":entry.id().checksum,
-                "origin":entry.origin(),"bytes":entry.bytes()
-            }]))
+            serde_json::to_vec(
+                &entries
+                    .iter()
+                    .map(|entry| {
+                        json!({
+                            "identity":StoredIdentity::from(&self.id), "writer":entry.id().writer,
+                            "sequence":entry.id().sequence,"checksum":entry.id().checksum,
+                            "origin":entry.origin(),"bytes":entry.bytes()
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+            )
             .unwrap(),
         )
         .unwrap();
@@ -442,7 +480,7 @@ fn intentional_driver_failure_is_bounded_and_reaps_actual_binary() {
 #[test]
 fn packaged_mock_host_clean_refresh_and_duplicate_delivery() {
     let mut f = Fixture::new("remote_clean", "# Seed\n\nTail\n", Some(true));
-    f.remote(0, "Remote");
+    f.remote(0, "Remote", false);
     f.run("remote", scenario("remote_clean"), true);
     f.host_cleanup();
     f.verify("# Remote\n\nTail\n", 1, None);
@@ -450,7 +488,7 @@ fn packaged_mock_host_clean_refresh_and_duplicate_delivery() {
 #[test]
 fn packaged_mock_host_dirty_disjoint_save_and_offline_restart() {
     let mut f = Fixture::new("remote_disjoint", "# Seed\n\nTail\n", Some(true));
-    f.remote(1, "Remote tail");
+    f.remote(1, "Remote tail", false);
     f.run("remote", scenario("remote_disjoint"), true);
     f.host_cleanup();
     f.args.truncate(f.args.len() - 2);
@@ -461,7 +499,7 @@ fn packaged_mock_host_dirty_disjoint_save_and_offline_restart() {
 #[test]
 fn packaged_mock_host_overlap_cancel_export_and_explicit_resolution() {
     let mut f = Fixture::new("remote_conflict", "# Seed\n\nTail\n", Some(true));
-    f.remote(0, "Remote");
+    f.remote(0, "Remote", false);
     f.run("conflict", scenario("remote_conflict"), true);
     f.host_cleanup();
     let recovery_root = editac_cli::tui::lifecycle::recovery_path(&f.root.join("cache.sqlite"));
@@ -499,7 +537,7 @@ fn packaged_mock_host_overlap_cancel_export_and_explicit_resolution() {
 #[test]
 fn packaged_host_scope_rejection_and_explicit_optin_guards() {
     let mut f = Fixture::new("remote_rejection", "# Seed\n\nTail\n", Some(true));
-    f.remote(0, "Remote");
+    f.remote(0, "Remote", false);
     let mut entries: Value =
         serde_json::from_slice(&fs::read(f.root.join("remote-entries.json")).unwrap()).unwrap();
     entries[0]["identity"]["epoch"] = json!("ac000000-0000-4000-8000-000000000999");
@@ -524,4 +562,31 @@ fn packaged_host_scope_rejection_and_explicit_optin_guards() {
         f.root.join("mock-host.py").into_os_string(),
     ];
     assert!(Request::parse(&local).is_err());
+}
+
+#[test]
+fn packaged_host_reordered_ticks_fetch_missing_predecessor_without_early_ack() {
+    let mut f = Fixture::new("remote_reordered", "# Seed\n\nTail\n", Some(true));
+    f.remote(0, "Remote", true);
+    f.run("reordered", scenario("remote_reordered"), true);
+    f.host_cleanup();
+    f.verify("# RXmote\n\nTail\n", 2, None);
+    let calls: Vec<Value> = fs::read_to_string(f.root.join("mock-calls.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert!(calls.iter().any(|call| {
+        call["acknowledged"]
+            .as_array()
+            .is_some_and(|a| a.len() == 2)
+    }));
+    assert!(calls.iter().any(|call| {
+        call["acknowledged"]
+            .as_array()
+            .is_some_and(|a| a.is_empty())
+            && call["queued"]
+                .as_array()
+                .is_some_and(|q| q.len() == 1 && q[0]["sequence"] == 2)
+    }));
 }
