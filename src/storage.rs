@@ -63,6 +63,8 @@ pub enum FailureKind {
     Io,
     Busy,
     Invalid,
+    /// Persisted document/profile/schema/epoch differs from the requested lineage.
+    IncompatibleIdentity,
     Missing,
     UnsupportedPlatform,
     PublicationUncertain,
@@ -248,7 +250,10 @@ impl StoredIdentity {
     }
     fn admit(&self, expected: &DocumentIdentity) -> Result<(), StorageError> {
         if self != &Self::from(expected) {
-            return Err(invalid("document/schema/epoch identity mismatch"));
+            return Err(StorageError {
+                kind: FailureKind::IncompatibleIdentity,
+                detail: "document/schema/epoch identity mismatch".into(),
+            });
         }
         Ok(())
     }
@@ -618,6 +623,7 @@ impl NativeStorage {
     fn recovery(&self, entries: Vec<JournalEntry>) -> Result<Recovery, StorageError> {
         let replay: Vec<_> = entries.iter().map(|e| e.replay(&self.identity)).collect();
         let mut rejected = None;
+        let mut incompatible = false;
         for (name, point) in [
             ("latest.json", RecoveryPoint::Latest),
             ("previous.json", RecoveryPoint::Previous),
@@ -647,6 +653,7 @@ impl NativeStorage {
                     });
                 }
                 Err(e) => {
+                    incompatible |= e.kind == FailureKind::IncompatibleIdentity;
                     if point == RecoveryPoint::Latest {
                         rejected = Some(e.to_string());
                     }
@@ -654,7 +661,11 @@ impl NativeStorage {
             }
         }
         Err(StorageError {
-            kind: FailureKind::Missing,
+            kind: if incompatible {
+                FailureKind::IncompatibleIdentity
+            } else {
+                FailureKind::Missing
+            },
             detail: format!(
                 "no valid recovery point; latest: {}",
                 rejected.unwrap_or_default()

@@ -30,3 +30,9 @@ pub mod diagnostics;
 
 /// Actual local editing and explicit recovery command orchestration.
 pub mod local;
+
+/// Explicit saved-credential port; no ambient credential discovery.
+pub mod auth;
+
+/// Authorized hosted bootstrap and native offline cache acquisition.
+pub mod hosted;
