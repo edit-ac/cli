@@ -1,0 +1,27 @@
+[workspace]
+members = ["crates/editac-core", "crates/editac-markdown"]
+resolver = "3"
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.97.1"
+license = "Apache-2.0"
+repository = "https://github.com/edit-ac/core"
+publish = false
+
+[workspace.dependencies]
+yrs = { version = "=0.28.0", features = ["small-client"] }
+wasm-bindgen = "=0.2.129"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+# Browser production only; native/release policy is unchanged.
+[profile.browser]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = "symbols"
+panic = "abort"

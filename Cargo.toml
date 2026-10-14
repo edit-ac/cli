@@ -9,9 +9,9 @@ description = "Local-first edit.ac editor client scaffold; editing commands are 
 publish = false
 
 [dependencies]
-# Published immutable source; never resolve through a sibling worktree.
-editac-core = { git = "https://github.com/edit-ac/core.git", rev = "5b3e96ec259f1cdd8df2971b2192c9cacf225a65" }
-editac-markdown = { git = "https://github.com/edit-ac/core.git", rev = "5b3e96ec259f1cdd8df2971b2192c9cacf225a65" }
+# Reviewed immutable vendored source; see vendor/core/provenance.json.
+editac-core = { path = "vendor/core/crates/editac-core" }
+editac-markdown = { path = "vendor/core/crates/editac-markdown" }
 
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.152"

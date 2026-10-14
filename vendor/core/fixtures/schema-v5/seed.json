@@ -1,0 +1,92 @@
+{
+  "envelope": {
+    "profile": "editac.yrs-yjs.editor.v5",
+    "schema": "editac.registry.editor.v5",
+    "protocolVersion": 1,
+    "updateEncoding": 1,
+    "offsets": "utf16",
+    "documentId": "77777777-7777-4777-8777-777777777777",
+    "epoch": "88888888-8888-4888-8888-888888888888"
+  },
+  "writer": 11,
+  "nodes": [
+    {
+      "id": "n:11:1",
+      "text": "a😀b",
+      "order": 0,
+      "tuple": [
+        "heading",
+        1
+      ],
+      "parent": "c:11:1"
+    },
+    {
+      "id": "n:11:2",
+      "text": "cאבd",
+      "order": 1,
+      "tuple": [
+        "paragraph"
+      ],
+      "parent": "c:11:1"
+    },
+    {
+      "id": "n:11:3",
+      "text": "éZ",
+      "order": 2,
+      "tuple": [
+        "heading",
+        6
+      ],
+      "parent": "c:11:3",
+      "check": true
+    },
+    {
+      "id": "n:11:4",
+      "text": "",
+      "order": 3,
+      "tuple": [
+        "paragraph"
+      ],
+      "parent": "c:11:3"
+    }
+  ],
+  "containers": [
+    {
+      "id": "c:11:1",
+      "kind": "list",
+      "parent": "@root",
+      "order": 0,
+      "tuple": [
+        "ordered",
+        7
+      ]
+    },
+    {
+      "id": "c:11:2",
+      "kind": "quote",
+      "parent": "c:11:1",
+      "order": 2,
+      "tuple": [
+        "quote"
+      ]
+    },
+    {
+      "id": "c:11:3",
+      "kind": "list",
+      "parent": "c:11:2",
+      "order": 0,
+      "tuple": [
+        "checklist"
+      ]
+    },
+    {
+      "id": "c:11:4",
+      "kind": "list",
+      "parent": "@root",
+      "order": 3,
+      "tuple": [
+        "unordered"
+      ]
+    }
+  ]
+}

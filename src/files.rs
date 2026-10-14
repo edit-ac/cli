@@ -399,6 +399,17 @@ fn publish(
     if target.resolved_path() == opened.resolved_path() && edit.buffer.source() == opened.source() {
         return Ok((SaveState::Unchanged, opened.resolved_path().to_owned()));
     }
+    publish_bytes(target, edit.buffer.source().as_bytes(), io)
+}
+
+/// Shared native publication for explicitly prepared UTF-8 interchange exports.
+/// Caller must resolve a baseline and enforce destination consent before entry.
+#[cfg(unix)]
+pub(crate) fn publish_bytes(
+    target: &LocalTarget,
+    source: &[u8],
+    io: &mut impl Filesystem,
+) -> Result<(SaveState, PathBuf), (FailureKind, Option<io::Error>)> {
     let parent = parent_path(target)?;
     let directory = File::open(&parent).map_err(io_failure)?;
     let parent_identity = identity(&directory.metadata().map_err(io_failure)?);
@@ -408,8 +419,7 @@ fn publish(
     let _lock = acquire(target.resolved_path())?;
     let permissions = revalidate(target)?;
     let (temporary, mut file) = temporary(&parent)?;
-    io.write_all(&mut file, edit.buffer.source().as_bytes())
-        .map_err(io_failure)?;
+    io.write_all(&mut file, source).map_err(io_failure)?;
     if let Some(permissions) = permissions {
         file.set_permissions(permissions).map_err(io_failure)?;
     }
@@ -455,5 +465,14 @@ fn publish(
     _: bool,
     _: &mut impl Filesystem,
 ) -> Result<(SaveState, PathBuf), Failure> {
+    Err(fail(FailureKind::UnsupportedPlatform))
+}
+
+#[cfg(not(unix))]
+pub(crate) fn publish_bytes(
+    _: &LocalTarget,
+    _: &[u8],
+    _: &mut impl Filesystem,
+) -> Result<(SaveState, PathBuf), (FailureKind, Option<io::Error>)> {
     Err(fail(FailureKind::UnsupportedPlatform))
 }

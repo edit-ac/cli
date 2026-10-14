@@ -13,19 +13,22 @@ fn help_lists_only_implemented_options() {
     let output = run(&["--help"]);
     assert!(output.status.success());
     assert!(output.stderr.is_empty());
-    assert_eq!(
-        String::from_utf8(output.stdout).unwrap(),
-        "editac — local-first editor client scaffold
-
-Usage: editac [--help | --version]
-
-Options:
-  --help       Show this help
-  --version    Show the development version
-
-No document commands are implemented.
-"
-    );
+    let help = String::from_utf8(output.stdout).unwrap();
+    for command in [
+        "validate <path>",
+        "inspect <path>",
+        "convert <path>",
+        "--input-format",
+        "--output-format",
+        "--allow-lossy",
+        "--overwrite",
+    ] {
+        assert!(help.contains(command), "{command}");
+    }
+    assert!(help.contains("No editing or hosted document commands are implemented."));
+    for command in ["editac edit", "editac sync", "editac status"] {
+        assert!(!help.contains(command));
+    }
 }
 
 #[test]
@@ -54,13 +57,13 @@ fn version_reports_the_pinned_engine_without_claiming_release() {
 
 #[test]
 fn unimplemented_commands_fail_without_touching_targets() {
-    for command in ["edit", "status", "sync", "validate", "convert", "inspect"] {
+    for command in ["edit", "status", "sync"] {
         let output = run(&[command, "/nonexistent/document.md"]);
         assert_eq!(output.status.code(), Some(2), "{command}");
         assert!(output.stdout.is_empty());
         assert_eq!(
             String::from_utf8(output.stderr).unwrap(),
-            "Unsupported argument. Run editac --help; no data commands are implemented.\n"
+            "Unsupported argument. Run editac --help; no editing or hosted commands are implemented.\n"
         );
     }
 }
@@ -79,4 +82,38 @@ fn shared_markdown_prepares_engine_fragments_without_a_second_replica() {
     // These portable reconciliation types must remain available to later tasks.
     let _ = std::mem::size_of::<editac_cli::markdown::reconcile::SourceBaseline>();
     let _ = std::mem::size_of::<editac_cli::markdown::reconcile::PreparedSourceEdit>();
+}
+
+#[test]
+fn vendored_shared_sources_match_the_immutable_provenance() {
+    use sha2::{Digest, Sha256};
+    use std::{fs, path::Path};
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("vendor/core");
+    let p: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(root.join("provenance.json")).unwrap()).unwrap();
+    assert_eq!(p["revision"], editac_cli::EDITOR_REVISION);
+    let hashes = p["sourceHashes"].as_object().unwrap();
+    assert_eq!(hashes.len(), 47);
+    for (path, expected) in hashes {
+        if path == "Cargo.toml" {
+            continue;
+        }
+        assert_eq!(
+            format!("{:x}", Sha256::digest(fs::read(root.join(path)).unwrap())),
+            expected.as_str().unwrap(),
+            "{path}"
+        );
+    }
+    let manifest = fs::read(root.join("Cargo.toml")).unwrap();
+    assert_eq!(
+        format!("{:x}", Sha256::digest(&manifest)),
+        p["vendoredManifestSha256"].as_str().unwrap()
+    );
+    let original = String::from_utf8(manifest).unwrap().replace(
+        "members = [\"crates/editac-core\", \"crates/editac-markdown\"]",
+        "members = [\"crates/editac-core\", \"crates/editac-wasm\", \"crates/editac-markdown\", \"crates/editac-markdown-wasm\", \"crates/editac-ffi\", \"crates/editac-session\", \"crates/editac-diff\"]");
+    assert_eq!(
+        format!("{:x}", Sha256::digest(original)),
+        hashes["Cargo.toml"].as_str().unwrap()
+    );
 }

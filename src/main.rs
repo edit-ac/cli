@@ -1,29 +1,115 @@
-use std::process::ExitCode;
+use editac_cli::diagnostics::{self, Format};
+use std::{ffi::OsString, path::PathBuf, process::ExitCode};
 
 const HELP: &str = "editac — local-first editor client scaffold
 
 Usage: editac [--help | --version]
+       editac validate <path> --input-format <markdown|json|update> [--base <path>]
+       editac inspect <path> --input-format <markdown|json|update> [--base <path>]
+       editac convert <path> --input-format <markdown|json|update>
+         --output-format <markdown|json|update> --output <path> [--allow-lossy] [--overwrite]
 
 Options:
   --help       Show this help
   --version    Show the development version
 
-No document commands are implemented.";
+Diagnostics are secondary interchange operations. Update inputs are identified
+JSON envelopes; incremental updates require an initialized identified --base.
+Inspection emits safe counts/codes. Remote durability is not assessed.
+Conversion requires explicit loss/overwrite consent and preserves the source.
+No editing or hosted document commands are implemented.";
 
+fn data_command(args: &[OsString]) -> Result<(), String> {
+    let operation = args[0].to_str().ok_or("invalid-command")?;
+    let source = PathBuf::from(args.get(1).ok_or("input-path-required")?);
+    let (mut input, mut output, mut destination, mut base) = (None, None, None, None);
+    let (mut allow_lossy, mut overwrite) = (false, false);
+    let mut i = 2;
+    while i < args.len() {
+        let flag = args[i].to_str().ok_or("invalid-option")?;
+        match flag {
+            "--allow-lossy" if operation == "convert" && !allow_lossy => allow_lossy = true,
+            "--overwrite" if operation == "convert" && !overwrite => overwrite = true,
+            "--input-format" | "--output-format" | "--output" | "--base" => {
+                i += 1;
+                let value = args.get(i).ok_or("option-value-required")?;
+                match flag {
+                    "--input-format" if input.is_none() => {
+                        input = Some(
+                            Format::parse(value.to_str().ok_or("invalid-format")?)
+                                .map_err(|e| e.to_string())?,
+                        )
+                    }
+                    "--output-format" if operation == "convert" && output.is_none() => {
+                        output = Some(
+                            Format::parse(value.to_str().ok_or("invalid-format")?)
+                                .map_err(|e| e.to_string())?,
+                        )
+                    }
+                    "--output" if operation == "convert" && destination.is_none() => {
+                        destination = Some(PathBuf::from(value))
+                    }
+                    "--base" if operation != "convert" && base.is_none() => {
+                        base = Some(PathBuf::from(value))
+                    }
+                    _ => return Err("unexpected-or-duplicate-option".into()),
+                }
+            }
+            _ => return Err("unexpected-or-duplicate-option".into()),
+        }
+        i += 1;
+    }
+    let input = input.ok_or("explicit-input-format-required")?;
+    if operation == "convert" {
+        let (_, conversion) = diagnostics::convert_file(
+            &source,
+            &destination.ok_or("output-path-required")?,
+            input,
+            output.ok_or("explicit-output-format-required")?,
+            allow_lossy,
+            overwrite,
+        )
+        .map_err(|e| e.to_string())?;
+        println!(
+            "{}",
+            serde_json::json!({"outputBytes":conversion.bytes.len(),"lossy":conversion.lossy,"diagnostics":conversion.diagnostics,"durability":"locally-saved"})
+        );
+    } else {
+        let bytes = diagnostics::read(&source).map_err(|e| e.to_string())?;
+        let base = base
+            .as_deref()
+            .map(diagnostics::read)
+            .transpose()
+            .map_err(|e| e.to_string())?;
+        let report =
+            diagnostics::validate(&bytes, input, base.as_deref()).map_err(|e| e.to_string())?;
+        println!(
+            "{}",
+            serde_json::to_string(&report).map_err(|_| "report-serialization-failed")?
+        );
+    }
+    Ok(())
+}
 fn main() -> ExitCode {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     match args.as_slice() {
         [] => println!("{HELP}"),
         [flag] if flag == "--help" => println!("{HELP}"),
-        [flag] if flag == "--version" => {
-            println!(
-                "editac {} (development scaffold; engine {})",
-                env!("CARGO_PKG_VERSION"),
-                editac_cli::EDITOR_REVISION
-            );
+        [flag] if flag == "--version" => println!(
+            "editac {} (development scaffold; engine {})",
+            env!("CARGO_PKG_VERSION"),
+            editac_cli::EDITOR_REVISION
+        ),
+        [command, ..] if matches!(command.to_str(), Some("validate" | "inspect" | "convert")) => {
+            if let Err(error) = data_command(&args) {
+                eprintln!("{error}. Run editac --help.");
+                return ExitCode::from(2);
+            }
         }
         _ => {
-            eprintln!("Unsupported argument. Run editac --help; no data commands are implemented.");
+            eprintln!(
+                "Unsupported argument. Run editac --help; no editing or hosted commands are implemented."
+            );
             return ExitCode::from(2);
         }
     }

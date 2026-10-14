@@ -135,8 +135,8 @@ dependencies = [
 [[package]]
 name = "editac-core"
 version = "0.0.0"
-source = "git+https://github.com/edit-ac/core.git?rev=5b3e96ec259f1cdd8df2971b2192c9cacf225a65#5b3e96ec259f1cdd8df2971b2192c9cacf225a65"
 dependencies = [
+ "serde",
  "serde_json",
  "unicode-segmentation",
  "url",
@@ -146,7 +146,6 @@ dependencies = [
 [[package]]
 name = "editac-markdown"
 version = "0.0.0"
-source = "git+https://github.com/edit-ac/core.git?rev=5b3e96ec259f1cdd8df2971b2192c9cacf225a65#5b3e96ec259f1cdd8df2971b2192c9cacf225a65"
 dependencies = [
  "editac-core",
  "pulldown-cmark",

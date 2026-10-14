@@ -7,8 +7,8 @@
 pub use editac_core as engine;
 pub use editac_markdown as markdown;
 
-/// Immutable upstream source consumed by both crates (also pinned in Cargo.lock).
-pub const EDITOR_REVISION: &str = "5b3e96ec259f1cdd8df2971b2192c9cacf225a65";
+/// Immutable upstream source consumed by both crates (bound by vendor/core/provenance.json).
+pub const EDITOR_REVISION: &str = "1a57fa527b28862865ca64c1fec170103d456af0";
 
 /// Offline local source acquisition, before any editor or mutation boundary.
 pub mod target;
@@ -24,3 +24,6 @@ pub mod files;
 
 /// Native checkpoint/journal/outbox and independent source-draft recovery.
 pub mod storage;
+
+/// Bounded secondary interchange operations; no transport or remote receipt.
+pub mod diagnostics;

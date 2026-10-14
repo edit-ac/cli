@@ -1,0 +1,22 @@
+[package]
+name = "editac-core"
+description = "Platform-independent edit.ac contract scaffold; no editor implementation yet"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+yrs.workspace = true
+unicode-segmentation = "=1.12.0"
+url = "=2.5.8"
+serde_json = "=1.0.152"
+serde = { version = "=1.0.229", features = ["derive"] }
+
+[dev-dependencies]
+editac-markdown = { path = "../editac-markdown" }

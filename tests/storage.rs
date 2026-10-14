@@ -744,7 +744,15 @@ fn process_worker() {
                 "local-source",
             )
             .unwrap();
-        fs::write(root.join("ack"), ack.update_id).unwrap();
+        // Publish the observation marker only after its exact ID is complete.
+        // Existence of an eagerly created file could otherwise trigger kill
+        // between create/truncate and write, after the store already acknowledged.
+        fs::write(root.join("ack.prepared"), ack.update_id).unwrap();
+        fs::File::open(root.join("ack.prepared"))
+            .unwrap()
+            .sync_all()
+            .unwrap();
+        fs::rename(root.join("ack.prepared"), root.join("ack")).unwrap();
         loop {
             std::thread::sleep(Duration::from_millis(100));
         }
