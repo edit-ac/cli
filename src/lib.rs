@@ -21,3 +21,6 @@ pub mod reconcile;
 
 /// Guarded native publication; semantic commit alone never acknowledges a save.
 pub mod files;
+
+/// Native checkpoint/journal/outbox and independent source-draft recovery.
+pub mod storage;

@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "boundaries": ["BeforeWrite", "AfterWrite", "AfterFileSync", "BeforePublish", "AfterPublish", "AfterDirectorySync"],
+  "baselineMarkdown": "# Before\r\n\r\nkeep _spelling_\r\n",
+  "editedMarkdown": "# After 🌍\r\n\r\nkeep _spelling_\r\n",
+  "baselineText": "literal **before** 👩‍💻\n",
+  "editedText": "literal **after** 👩‍💻\n"
+}

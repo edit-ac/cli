@@ -312,6 +312,10 @@ fn cooperating_lock_is_exclusive_and_persistent_then_releases_on_failure() {
     let e = failure(files::save(f.edit("after")), FailureKind::Busy);
     f.original("before");
     f.recovery(&e.edit, "after");
+    // Release the fixture's external lock explicitly. A concurrent native-helper
+    // fork can temporarily inherit its file description before exec on macOS.
+    // The production lock release is still asserted after save below.
+    lock.unlock().unwrap();
     drop(lock);
     files::save(e.edit).unwrap();
     assert_eq!(fs::metadata(&path).unwrap().ino(), inode);
