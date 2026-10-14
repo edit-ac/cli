@@ -18,3 +18,6 @@ pub mod editor;
 
 /// Exact-source preparation over the shared engine; does not publish files.
 pub mod reconcile;
+
+/// Guarded native publication; semantic commit alone never acknowledges a save.
+pub mod files;
