@@ -9,6 +9,8 @@ description = "Local-first Markdown and literal-text editor with optional config
 publish = false
 
 [dependencies]
+unicode-segmentation = "=1.12.0"
+unicode-width = "=0.2.2"
 # TUI-1.2: bounded backend decision in architecture/decisions/tui-backend.md.
 ratatui = { version = "=0.30.2", default-features = false, features = ["crossterm_0_29"] }
 crossterm = { version = "=0.29.0", default-features = false, features = ["events", "bracketed-paste", "windows"] }

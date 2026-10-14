@@ -147,7 +147,27 @@ impl<T: TerminalIo> TerminalOwner<T> {
                 {
                     return Ok(());
                 }
-                _ => false, // No edit/mutation routes in the lifecycle shell.
+                event if view.focused => {
+                    if let Some(input) = &mut view.input {
+                        let before = view.source.clone();
+                        match input.handle(&mut view.source, &event) {
+                            Ok(changed) => {
+                                view.draft_changed |= before != view.source;
+                                if changed {
+                                    view.input_message = None;
+                                }
+                                changed
+                            }
+                            Err(error) => {
+                                view.input_message = Some(format!("input rejected: {error:?}"));
+                                true
+                            }
+                        }
+                    } else {
+                        false
+                    }
+                }
+                _ => false,
             };
             if redraw {
                 self.io.draw(view)?;
@@ -226,6 +246,16 @@ pub fn run<S: editac_session::session::SessionStore>(
     session: &super::session::TerminalSession<S>,
     now: u64,
 ) -> io::Result<()> {
+    // Retain the qualified source target/revision for subsequent commands. Input
+    // does not prepare or apply automatically; unsupported sources stay viewable.
+    let binding = super::input::SourceInput::capture(session, now);
     let mut view = View::from_session(session, now);
+    if binding.is_err() {
+        if let Some(input) = &mut view.input {
+            input.writable = false;
+        }
+        view.input_message = Some("source preparation unavailable; read only".into());
+    }
+    let _binding = binding;
     TerminalOwner::new(CrosstermIo::default()).run(&mut view)
 }

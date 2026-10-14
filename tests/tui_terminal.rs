@@ -127,6 +127,9 @@ fn view() -> View {
         source: "# source\nsecond line\nthird".into(),
         status: "exact source | local initialized | remote unknown".into(),
         focused: true,
+        input: None,
+        input_message: None,
+        draft_changed: false,
     }
 }
 fn key(code: KeyCode, modifiers: KeyModifiers) -> Option<Event> {
@@ -154,7 +157,7 @@ fn fixed_frame_has_source_status_and_help_snapshot() {
         "second line",
         "third",
         "focused | exact source | local initialized | remote unknown",
-        "Esc / Ctrl-Q: quit | source shell; editing pending",
+        "Esc / Ctrl-Q: quit | arrows / Shift: select | paste: literal",
     ];
     let padded: Vec<_> = expected.iter().map(|s| format!("{s:<64}")).collect();
     assert_eq!(trace.frames, [Buffer::with_lines(padded)]);
