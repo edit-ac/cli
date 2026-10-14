@@ -301,7 +301,10 @@ fn command_acquires_local_and_hosted_sessions_and_reports_honest_phase() {
     );
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["phase"], "session-acquired");
-    assert_eq!(report["presentation"], "terminal loop pending");
+    assert_eq!(
+        report["presentation"],
+        "noninteractive session report; terminal requires a TTY"
+    );
     assert_eq!(report["representation"], "ExactSource");
     assert_eq!(report["canApply"], true);
     assert!(report["identity"]["documentId"].as_str().is_some());

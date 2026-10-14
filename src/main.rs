@@ -162,11 +162,19 @@ fn main() -> ExitCode {
                     let now = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map_or(u64::MAX, |d| d.as_secs());
+                    use std::io::IsTerminal;
+                    if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
+                        if editac_cli::tui::terminal::run(&session, now).is_err() {
+                            eprintln!("terminal I/O failed; retain session store for recovery");
+                            return ExitCode::from(2);
+                        }
+                        return ExitCode::SUCCESS;
+                    }
                     let state = session.service.session().state(now);
                     let capabilities = session.service.capabilities(now);
                     println!(
                         "{}",
-                        serde_json::json!({"phase":"session-acquired", "presentation":"terminal loop pending", "sourceBytes": session.source.len(), "representation":format!("{:?}",session.representation), "identity":editac_cli::storage::StoredIdentity::from(session.service.session().document().identity()), "canPrepare":capabilities.can_prepare, "canApply":capabilities.can_apply, "canHistory":capabilities.can_history, "permission":format!("{:?}",state.permission)})
+                        serde_json::json!({"phase":"session-acquired", "presentation":"noninteractive session report; terminal requires a TTY", "sourceBytes": session.source.len(), "representation":format!("{:?}",session.representation), "identity":editac_cli::storage::StoredIdentity::from(session.service.session().document().identity()), "canPrepare":capabilities.can_prepare, "canApply":capabilities.can_apply, "canHistory":capabilities.can_history, "permission":format!("{:?}",state.permission)})
                     );
                 }
                 Err(error) => {
