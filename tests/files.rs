@@ -118,6 +118,22 @@ fn failure(result: Result<files::SavedEdit, SaveFailure>, kind: FailureKind) -> 
     error
 }
 
+// On macOS, parallel native-helper spawn can inherit an advisory-lock file
+// description until exec. Bound the teardown oracle without accepting a leaked
+// lock or repeating the feature workflow. No helper is allowed to keep it held.
+fn assert_lock_released(file: &File) {
+    for _ in 0..100 {
+        match file.try_lock() {
+            Ok(()) => return,
+            Err(std::fs::TryLockError::WouldBlock) => {
+                std::thread::sleep(std::time::Duration::from_millis(5))
+            }
+            Err(error) => panic!("lock release check failed: {error}"),
+        }
+    }
+    panic!("save lock remained held after bounded native-helper teardown");
+}
+
 #[test]
 fn markdown_unicode_exact_spelling_saved_with_one_shared_history_commit() {
     let f = Fixture::new(Some("# Before\n\nwords\n"), "md");
@@ -182,8 +198,27 @@ fn permissions_are_preserved_on_replacement() {
     let f = Fixture::new(Some("before"), "txt");
     fs::set_permissions(f.target.resolved_path(), fs::Permissions::from_mode(0o640)).unwrap();
     let before = fs::metadata(f.target.resolved_path()).unwrap();
+    #[cfg(target_os = "macos")]
+    let provenance_before = std::process::Command::new("/usr/bin/xattr")
+        .args(["-p", "com.apple.provenance"])
+        .arg(f.target.resolved_path())
+        .output()
+        .unwrap();
     files::save(f.edit("after")).unwrap();
     let after = fs::metadata(f.target.resolved_path()).unwrap();
+    #[cfg(target_os = "macos")]
+    {
+        let provenance_after = std::process::Command::new("/usr/bin/xattr")
+            .args(["-p", "com.apple.provenance"])
+            .arg(f.target.resolved_path())
+            .output()
+            .unwrap();
+        assert_eq!(
+            provenance_before.status.code(),
+            provenance_after.status.code()
+        );
+        assert_eq!(provenance_before.stdout, provenance_after.stdout);
+    }
     assert_eq!((before.uid(), before.gid()), (after.uid(), after.gid()));
     assert_eq!(
         fs::metadata(f.target.resolved_path()).unwrap().mode() & 0o777,
@@ -285,7 +320,7 @@ fn cooperating_lock_is_exclusive_and_persistent_then_releases_on_failure() {
         .write(true)
         .open(path)
         .unwrap();
-    released.try_lock().unwrap();
+    assert_lock_released(&released);
 }
 #[test]
 fn hostile_lock_symlink_is_rejected_without_touching_referent() {
@@ -419,7 +454,7 @@ fn full_disk_partial_write_preserves_original_draft_and_releases_lock() {
         .write(true)
         .open(files::lock_path(f.target.resolved_path()))
         .unwrap();
-    lock.try_lock().unwrap();
+    assert_lock_released(&lock);
 }
 #[test]
 fn file_and_directory_preflight_sync_failures_do_not_publish() {
@@ -544,4 +579,74 @@ fn existing_export_symlink_is_never_followed_even_with_overwrite() {
     assert_eq!(fs::read_to_string(other).unwrap(), "protected");
     f.original("before");
     f.recovery(&e.edit, "after");
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn extended_acl_is_rejected_without_dropping_permissions_or_draft() {
+    use std::process::Command;
+    let f = Fixture::new(Some("before"), "txt");
+    let edit = f.edit("after");
+    let path = f.target.resolved_path();
+    assert!(
+        Command::new("/bin/chmod")
+            .args(["+a", "everyone deny write"])
+            .arg(path)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let before = Command::new("/bin/ls")
+        .arg("-lde")
+        .arg(path)
+        .output()
+        .unwrap();
+    assert!(before.status.success());
+    let result = files::save(edit);
+    let after = Command::new("/bin/ls")
+        .arg("-lde")
+        .arg(path)
+        .output()
+        .unwrap();
+    assert!(
+        Command::new("/bin/chmod")
+            .arg("-N")
+            .arg(path)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let e = failure(result, FailureKind::UnsupportedPermissions);
+    assert_eq!(before.stdout, after.stdout);
+    f.original("before");
+    f.recovery(&e.edit, "after");
+    f.no_temporary();
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn extended_attributes_are_rejected_without_losing_source_metadata() {
+    use std::process::Command;
+    let f = Fixture::new(Some("before"), "txt");
+    let edit = f.edit("after");
+    let path = f.target.resolved_path();
+    assert!(
+        Command::new("/usr/bin/xattr")
+            .args(["-w", "com.editac.fixture", "retained"])
+            .arg(path)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let e = failure(files::save(edit), FailureKind::UnsupportedPermissions);
+    let attribute = Command::new("/usr/bin/xattr")
+        .args(["-p", "com.editac.fixture"])
+        .arg(path)
+        .output()
+        .unwrap();
+    assert!(attribute.status.success());
+    assert_eq!(attribute.stdout, b"retained\n");
+    f.original("before");
+    f.recovery(&e.edit, "after");
+    f.no_temporary();
 }

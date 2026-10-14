@@ -3,7 +3,7 @@
 //! Unix regular files only. A persistent, private sidecar inode coordinates
 //! edit.ac writers (never unlink a lock file: that would split the lock domain).
 //! Exact bytes and POSIX mode/owner/group are preserved (a replacement with
-//! different ownership is rejected); LF/CRLF/mixed endings are taken
+//! different ownership, ACL or extended metadata is rejected); LF/CRLF/mixed endings are taken
 //! from the user's accepted source, with no export normalization. Missing targets
 //! use atomic no-clobber hard-link publication; existing targets use rename.
 //!
@@ -39,6 +39,7 @@ pub struct SavedEdit {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FailureKind {
     UnsupportedPlatform,
+    UnsupportedPermissions,
     Busy,
     Stale,
     TargetChanged,
@@ -166,6 +167,61 @@ fn parent_path(target: &LocalTarget) -> Result<PathBuf, Failure> {
     }
     Ok(parent)
 }
+/// std::fs exposes POSIX mode bits, not extended ACLs/attributes. Refuse these rather
+/// than drop access restrictions during inode replacement. Use the native ls
+/// permission indicator (and macOS ACL rows), with a fixed executable/locale
+/// and absolute path. No shell or document content is passed. Unavailable or
+/// unfamiliar native permission inspection fails closed.
+#[cfg(unix)]
+fn require_mode_permissions(path: &Path) -> Result<Vec<u8>, Failure> {
+    let mut command = std::process::Command::new("/bin/ls");
+    command.env("LC_ALL", "C");
+    #[cfg(target_os = "macos")]
+    command.arg("-lde");
+    #[cfg(not(target_os = "macos"))]
+    command.arg("-ld");
+    let output = command
+        .arg(path)
+        .output()
+        .map_err(|_| fail(FailureKind::UnsupportedPermissions))?;
+    if !output.status.success() {
+        return Err(fail(FailureKind::UnsupportedPermissions));
+    }
+    let mut lines = output.stdout.split(|b| *b == b'\n');
+    let first = lines.next().unwrap_or_default();
+    let mode = first
+        .split(|b| b.is_ascii_whitespace())
+        .next()
+        .unwrap_or_default();
+    if mode.first() != Some(&b'-') || mode.len() < 10 || lines.any(|line| !line.is_empty()) {
+        return Err(fail(FailureKind::UnsupportedPermissions));
+    }
+    if mode.len() == 10 {
+        return Ok(Vec::new());
+    }
+    #[cfg(target_os = "macos")]
+    if mode == [&mode[..10], b"@"].concat() {
+        // macOS automatically adds provenance even to new plain files. Permit
+        // only that native attribute, and return its exact value for comparison
+        // against the staged inode before publication. Never drop unknown attrs.
+        let names = std::process::Command::new("/usr/bin/xattr")
+            .arg(path)
+            .output()
+            .map_err(|_| fail(FailureKind::UnsupportedPermissions))?;
+        if names.status.success() && names.stdout == b"com.apple.provenance\n" {
+            let value = std::process::Command::new("/usr/bin/xattr")
+                .args(["-p", "com.apple.provenance"])
+                .arg(path)
+                .output()
+                .map_err(|_| fail(FailureKind::UnsupportedPermissions))?;
+            if value.status.success() {
+                return Ok(value.stdout);
+            }
+        }
+    }
+    Err(fail(FailureKind::UnsupportedPermissions))
+}
+
 #[cfg(unix)]
 fn revalidate(target: &LocalTarget) -> Result<Option<Permissions>, Failure> {
     let parent = parent_path(target)?;
@@ -219,6 +275,7 @@ fn revalidate(target: &LocalTarget) -> Result<Option<Permissions>, Failure> {
             if !fingerprint.matches(current.source_bytes()) {
                 return Err(fail(FailureKind::Stale));
             }
+            require_mode_permissions(target.resolved_path())?;
             if !writable(&metadata) {
                 return Err(fail(FailureKind::ReadOnly));
             }
@@ -356,6 +413,7 @@ fn publish(
     if let Some(permissions) = permissions {
         file.set_permissions(permissions).map_err(io_failure)?;
     }
+    require_mode_permissions(&temporary.0)?;
     file.flush().map_err(io_failure)?;
     io.sync_file(&file).map_err(io_failure)?;
     // Probe directory durability support before crossing the publication boundary.
@@ -369,7 +427,9 @@ fn publish(
         use std::os::unix::fs::MetadataExt;
         let current = fs::symlink_metadata(target.resolved_path()).map_err(io_failure)?;
         let staged = file.metadata().map_err(io_failure)?;
-        if current.permissions() != staged.permissions()
+        if require_mode_permissions(target.resolved_path())?
+            != require_mode_permissions(&temporary.0)?
+            || current.permissions() != staged.permissions()
             || current.uid() != staged.uid()
             || current.gid() != staged.gid()
         {
