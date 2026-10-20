@@ -13,3 +13,9 @@ All automated checks use deterministic fixtures and prepared/mock transports. No
 Scaffold packages remain unpublishable until documented APIs, packed consumer checks and release gates pass. The selected project license is Apache-2.0. Use plain-English imperative commit subjects without Conventional Commit prefixes.
 
 Track and clean up task-owned temporary servers/browsers; verify ownership before stopping anything. Preserve other tasks' processes, source, data and evidence. Check data-volume free space after substantial build/test work; remove only this session's inactive reproducible artifacts.
+
+## Source-only Git policy — user decision, 2026-10-20
+
+Keep source code, authored documentation, configuration and deterministic input fixtures in Git. Never commit generated caches, qualification evidence, screenshots, recordings, test reports, benchmark results, compiled binaries, packed dependencies, runtime/source snapshots or test databases. Exclude these outputs with .gitignore.
+
+Run focused checks using ignored, task-owned temporary directories. Keep only the diagnostics needed for an active failure, then remove them after debugging; do not create gigabytes of evidence or routine artifact archives during development. Report concise pass/fail counts in the conversation or commit description. Release artifacts belong outside source repositories. This supersedes older blanket evidence-retention wording for generated development/test output; preserve source, real user data, credentials and active processes.

@@ -3,3 +3,14 @@
 .env
 .env.*
 !.env.example
+
+# Generated development/test output stays local and temporary.
+/evidence/
+/.artifacts/
+/.roadmap-runner/
+/test-results/
+/playwright-report/
+/coverage/
+/benchmark-results/
+/regression-results/
+/architecture-results/
